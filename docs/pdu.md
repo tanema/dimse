@@ -85,15 +85,6 @@ Release request and response are exactly the same
 | 3-6       | Item-length        | `uint16`   | length til end                      |
 | 5-xxx     | Application-context-name|       | A valid Application-context-name    |
 
-### Transfer Syntax Sub-Item
-
-| bytes     | Field name         | Datatype   | Description of field                |
-|-----------|--------------------|------------|-------------------------------------|
-| 1         | Item-type          | `uint8`    | `0x40`                              |
-| 2         | Reserved           | `uint8`    | `0x00`                              |
-| 3-6       | Item-length        | `uint16`   | length til end                      |
-| 5-xxx     | Transfer-syntax-name(s)|        | This variable field shall contain the Transfer-syntax-name proposed for this presentation context.
-
 ### Presentation Context Item Fields
 
 | bytes     | Field name         | Datatype   | Description of field                |
@@ -105,7 +96,16 @@ Release request and response are exactly the same
 | 6         | Reserved           | `uint8`    | `0x00`                              |
 | 7         | Result/Reason      | `uint8`    | 0: acceptance, 1: user-rejection, 2: no-reason, 3: abstract-syntax-not-supported, 4: transfer-syntaxes-not-supported |
 | 8         | Reserved           | `uint8`    | `0x00`                              |
-| 9-xxx     | Transfer syntax sub-item|        | one Transfer Syntax Sub-Item. When the Result/Reason field has a value other than acceptance (0), this field shall not be significant and its value shall not be tested when received.
+| 9-xxx     | Transfer syntax sub-item|        | one [Transfer Syntax Sub-Item](#transfer-syntax-sub-item). When the Result/Reason field has a value other than acceptance (0), this field shall not be significant and its value shall not be tested when received.
+
+### Transfer Syntax Sub-Item
+
+| bytes     | Field name         | Datatype   | Description of field                |
+|-----------|--------------------|------------|-------------------------------------|
+| 1         | Item-type          | `uint8`    | `0x40`                              |
+| 2         | Reserved           | `uint8`    | `0x00`                              |
+| 3-6       | Item-length        | `uint16`   | length til end                      |
+| 5-xxx     | Transfer-syntax-name(s)|        | This variable field shall contain the Transfer-syntax-name proposed for this presentation context.
 
 ### Abstract Syntax Sub-Item
 
