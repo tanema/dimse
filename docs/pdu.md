@@ -5,9 +5,9 @@ association request
 
 | bytes     | Field name                      | Description of field                |
 |-----------|---------------------------------|-------------------------------------|
-| 1         | PDU-type                        | `01H`                               |
-| 2         | Reserved                        | `00H`                               |
-| 3-6       | PDU-length                      | uint16 number of bytes from the first byte of the following field to the last byte of the variable field
+| 1         | PDU-type                        | `0x01`                              |
+| 2         | Reserved                        | `0x00`                              |
+| 3-6       | PDU-length                      | uint16 length til end               |
 | 7-8       | Protocol-version                | uint16                              |
 | 9-10      | Reserved                        | `0000H`                             |
 | 11-26     | Called-AE-title                 | Destination DICOM Application Name. It shall be encoded as 16 characters as defined by the ISO 646:1990-Basic G0 Set with leading and trailing spaces (20H) being non-significant. The value made of 16 spaces (20H) meaning "no Application Name specified" shall not be used.
@@ -20,9 +20,9 @@ association accepted
 
 | bytes     | Field name                      | Description of field                |
 |-----------|---------------------------------|-------------------------------------|
-| 1         | PDU-type                        | `02H`                               |
-| 2         | Reserved                        | `00H`                               |
-| 3-6       | PDU-length                      | uint16 number of bytes from the first byte of the following field to the last byte of the variable field.
+| 1         | PDU-type                        | `0x02`                              |
+| 2         | Reserved                        | `0x00`                              |
+| 3-6       | PDU-length                      | uint16 length til end               |
 | 7-8       | Protocol-version                | uint16                              |
 | 9-10      | Reserved                        | `0000H`                             |
 | 11-26     | Called-AE-title                 | Destination DICOM Application Name. It shall be encoded as 16 characters as defined by the ISO 646:1990-Basic G0 Set with leading and trailing spaces (20H) being non-significant. The value made of 16 spaces (20H) meaning "no Application Name specified" shall not be used.
@@ -35,23 +35,45 @@ Association request rejected
 
 | bytes     | Field name                      | Description of field                |
 |-----------|---------------------------------|-------------------------------------|
-| 1         | PDU-type                        | `03H`                               |
-| 2         | Reserved                        | `00H`                               |
-| 3-6       | PDU-length                      | uint32 number of bytes from the first byte of the following field to the last byte of the Reason/Diag. field. In the case of this PDU, it shall have the fixed value of `00000004H` encoded as an unsigned binary number.
-| 7         | Reserved                        | `00H`                               |
-| 8         | Result                          | uint8. 1: permanent, 2: transient
+| 1         | PDU-type                        | `0x03`                              |
+| 2         | Reserved                        | `0x00`                              |
+| 3-6       | PDU-length                      | uint16 length til end               |
+| 7         | Reserved                        | `0x00`                              |
+| 8         | Result                          | uint8. 1: permanent, 2: transient   |
 | 9         | Source                          | uint8. One of the following values shall be used: 1: DICOM UL service-user, 2: DICOM UL service-provider (ACSE related function), 3: DICOM UL service-provider (Presentation related function)
-| 10        | Reason/Diag.                    | uint8. [See Reasons](#reasons)
+| 10        | Reason/Diag.                    | uint8. [Reasons](#reject-reasons)   |
 
 ## P-DATA-TF
 Used once an association has been established to send DIMSE message data.
 
 | bytes     | Field name                      | Description of field                |
 |-----------|---------------------------------|-------------------------------------|
-| 1         | PDU-type                        | `04H`
-| 2         | Reserved                        | reserved field should be sent with a value `00H` but not tested to this value when received.
-| 3-6       | PDU-length                      | uint16 number of bytes from the first byte of the following field to the last byte of the variable field.
-| 7-xxx     | Presentation-data-value Item(s) | contains one or more Presentation-data-value Items(s)
+| 1         | PDU-type                        | `0x04`                              |
+| 2         | Reserved                        | `0x00`                              |
+| 3-6       | PDU-length                      | uint16 length til end               |
+| 7-xxx     | Presentation-data-value Item(s) | contains one or more [Presentation-Data-Value Item Fields](#presentation-data-value-item-fields) |
+
+## A-RELEASE-RQ and A-RELEASE-RP
+Release request and response are exactly the same
+
+| bytes     | Field name                      | Description of field                |
+|-----------|---------------------------------|-------------------------------------|
+| 1         | PDU-type                        | `0x05`                              |
+| 2         | Reserved                        | `0x00`                              |
+| 3-6       | PDU-length                      | uint16 length til end               |
+| 7-10      | Reserved                        | `0x00000000`                        |
+
+## A-ABORT
+
+| bytes     | Field name                      | Description of field                |
+|-----------|---------------------------------|-------------------------------------|
+| 1         | PDU-type                        | `0x07`                              |
+| 2         | Reserved                        | `0x00`                              |
+| 3-6       | PDU-length                      | uint16 length til end               |
+| 7         | Reserved                        | `0x00`                              |
+| 8         | Reserved                        | `0x00`                              |
+| 9         | Source                          | uint8 0: DICOM UL service-user, 1: reserved, 2: DICOM UL service-provider (initiated abort) |
+| 10        | Reason/Diag.                    | uint8 [Reasons](#abort-reasons)     |
 
 ## Sub field definitions
 
@@ -59,28 +81,28 @@ Used once an association has been established to send DIMSE message data.
 | bytes     | Field name                      | Description of field                |
 |-----------|---------------------------------|-------------------------------------|
 | 1         | Item-type                       | 10H                                 |
-| 2         | Reserved                        | `00H`                               |
-| 3-4       | Item-length                     | uint16 number of bytes from the first byte of the following field to the last byte of the Application-context-name field.
+| 2         | Reserved                        | `0x00`                              |
+| 3-4       | Item-length                     | uint16 length til end               |
 | 5-xxx     | Application-context-name        | A valid Application-context-name    |
 
 ### Transfer Syntax Sub-Item
 
 | bytes     | Field name                      | Description of field                |
 |-----------|---------------------------------|-------------------------------------|
-| 1         | Item-type                       | `40H`                               |
-| 2         | Reserved                        | `00H`                               |
-| 3-4       | Item-length                     | uint16 number of bytes from the first byte of the following field to the last byte of the Transfer-syntax-name field(s).
+| 1         | Item-type                       | `0x40`                              |
+| 2         | Reserved                        | `0x00`                              |
+| 3-4       | Item-length                     | uint16 length til end               |
 | 5-xxx     | Transfer-syntax-name(s)         | This variable field shall contain the Transfer-syntax-name proposed for this presentation context.
 
 ### Presentation Context Item Fields
 
 | bytes     | Field name                      | Description of field                |
 |-----------|---------------------------------|-------------------------------------|
-| 1         | Item-type                       | `21H`                               |
-| 2         | Reserved                        | `00H`                               |
-| 3-4       | Item-length                     | uint16 number of bytes from the first byte of the following field to the last byte of the Transfer Syntax Sub-Item.
-| 5         | Presentation-context-ID         | uint8 values shall be odd integers between 1 and 255.
-| 6         | Reserved                        | `00H`                               |
+| 1         | Item-type                       | `0x21`                              |
+| 2         | Reserved                        | `0x00`                              |
+| 3-4       | Item-length                     | uint16 length til end               |
+| 5         | Presentation-context-ID         | uint8 values shall be odd integers between 1 and 255. |
+| 6         | Reserved                        | `0x00`                              |
 | 7         | Result/Reason                   | uint8 0: acceptance, 1: user-rejection, 2: no-reason, 3: abstract-syntax-not-supported, 4: transfer-syntaxes-not-supported
 | 8         | Reserved                        | `00H`                               |
 | 9-xxx     | Transfer syntax sub-item        | one Transfer Syntax Sub-Item. When the Result/Reason field has a value other than acceptance (0), this field shall not be significant and its value shall not be tested when received.
@@ -89,19 +111,19 @@ Used once an association has been established to send DIMSE message data.
 
 | bytes     | Field name                      | Description of field                |
 |-----------|---------------------------------|-------------------------------------|
-| 1         | Item-type                       | `30H`                               |
-| 2         | Reserved                        | `00H`                               |
-| 3-4       | Item-length                     | uint16 number of bytes from the first byte of the following field to the last byte of the Abstract-syntax-name field.
-| 5-xxx     | Abstract-syntax-name            | This variable field shall contain the Abstract-syntax-name related to the proposed presentation context.
+| 1         | Item-type                       | `0x30`                              |
+| 2         | Reserved                        | `0x00`                              |
+| 3-4       | Item-length                     | uint16 length til end               |
+| 5-xxx     | Abstract-syntax-name            | This variable field shall contain the Abstract-syntax-name related to the proposed presentation context. |
 
 ### User Information Item Fields
 
 | bytes     | Field name                      | Description of field                |
 |-----------|---------------------------------|-------------------------------------|
-| 1         | Item-type                       | 50H                                 |
-| 2         | Reserved                        | `00H`                               |
-| 3-4       | Item-length                     | uint16 number of bytes from the first byte of the following field to the last byte of the User-data-information field(s)
-| 5-xxx     | User-data                       | This variable field shall contain User-data sub-items as defined by the DICOM Application Entity.
+| 1         | Item-type                       | `0x50`                              |
+| 2         | Reserved                        | `0x00`                              |
+| 3-4       | Item-length                     | uint16 length til end               |
+| 5-xxx     | User-data                       | User-data sub-items as defined by the DICOM Application Entity. |
 
 ### Presentation-Data-Value Item Fields
 
@@ -111,7 +133,7 @@ Used once an association has been established to send DIMSE message data.
 | 5         | Presentation-context-ID         | odd integers between 1 and 255, encoded as an unsigned binary number
 | 6-xxx     | Presentation-data-value         | contain DICOM message information (command and/or Data Set) with a message control header
 
-### Reasons
+### Reject Reasons
 If Source is 1
 - 1: no-reason-given
 - 2: application-context-name-not-supported
@@ -129,3 +151,17 @@ If the Source is 3
 - 1: temporary-congestion
 - 2: local-limit-exceeded
 - 3-7: reserved
+
+### Abort Reasons
+If the Source field has the value (0) "DICOM UL service-user", this reason field
+shall not be significant. It shall be sent with a value 00H but not tested to
+this value when received.
+
+If the Source field has the value (2)
+- 0: reason-not-specified
+- 1: unrecognized-PDU
+- 2: unexpected-PDU
+- 3: reserved
+- 4: unrecognized-PDU parameter
+- 5: unexpected-PDU parameter
+- 6: invalid-PDU-parameter value
