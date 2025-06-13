@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 
 	"github.com/tanema/dimse/obj"
+	"github.com/tanema/dimse/obj/commands"
 	"github.com/tanema/dimse/pdu"
 )
 
@@ -161,12 +162,16 @@ func (c *Client) pdata(ctxMan *pdu.ContextManager, cmd *Command) error {
 		if evt.err != nil {
 			return evt.err
 		}
-		switch evt.evt.(type) {
+		switch tevt := evt.evt.(type) {
 		case *pdu.PDataTf:
-			fmt.Println("got pdata")
+			for _, item := range tevt.Items {
+				fmt.Printf("ContextID: %v Command: %v Last: %v Value: %v\n", item.ContextID, item.Command, item.Last, len(item.Value))
+				cmd, err := DecodeCmd(item.Value)
+				fmt.Println(cmd, err)
+			}
 			return nil
 		case *pdu.AAbort:
-			return fmt.Errorf("aborted pdata. this usually means malformed pdata")
+			return fmt.Errorf("aborted pdata. Reason: %s Source: %s", tevt.Reason, tevt.Source)
 		default:
 			return fmt.Errorf("unexpected message %T after sending release", evt.evt)
 		}
@@ -175,10 +180,10 @@ func (c *Client) pdata(ctxMan *pdu.ContextManager, cmd *Command) error {
 
 func (c *Client) Echo() error {
 	return c.Dispatch(&Command{
-		CommandField:        CECHORQ,
+		CommandField:        commands.CECHORQ,
 		MessageID:           int(c.nextMsgID()),
 		AffectedSOPClassUID: obj.VerificationClasses,
-		CommandDataSetType:  CommandDataSetTypeNonNull,
+		CommandDataSetType:  commands.Null,
 	})
 }
 

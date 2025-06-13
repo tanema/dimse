@@ -7,10 +7,13 @@ full command process looks like:
 
 - -> Assoc Request with one or more presentation context with ID, SOP and transfer syntax for types of data you will be handling.
 - <- Assoc Accept with accepted presentation contexts.
-- -> PDU Command(s) with AffectedSOPClassUID field that was added to the assoc request.
-- <- PDU Command Resp
-- <- PDU Data Resp
-- ...
+- -> PDU PData Command(s) with AffectedSOPClassUID field that was added to the assoc request.
+- -> PDU PData Data
+- -> ...
+- -> PDU Last Data
+- <- PDU PData Command Resp
+- <- PDU PData Data Resp
+- <- ...
 - <- PDU Last Data Resp
 - -> Release Request
 - <- Release Response

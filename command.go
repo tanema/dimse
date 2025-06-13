@@ -7,16 +7,17 @@ import (
 
 	"github.com/suyashkumar/dicom"
 	"github.com/suyashkumar/dicom/pkg/tag"
+	"github.com/tanema/dimse/obj/commands"
 	"github.com/tanema/dimse/obj/tags"
 )
 
 type (
 	Command struct {
 		Dataset             dicom.Dataset
-		CommandField        CommandKind
+		CommandField        commands.Kind
 		AffectedSOPClassUID []string
 		MessageID           int
-		CommandDataSetType  int
+		CommandDataSetType  commands.DataSetType
 		Status              int
 		ErrorComment        string
 		Priority            int    // CStore CMove CGet CFind
@@ -31,36 +32,6 @@ type (
 		MoveOriginatorApplicationEntityTitle string
 		MoveOriginatorMessageID              int
 	}
-	CommandKind int
-)
-
-const (
-	CSTORERQ        CommandKind = 0x0001
-	CSTORERSP       CommandKind = 0x8001
-	CGETRQ          CommandKind = 0x0010
-	CGETRSP         CommandKind = 0x8010
-	CFINDRQ         CommandKind = 0x0020
-	CFINDRSP        CommandKind = 0x8020
-	CMOVERQ         CommandKind = 0x0021
-	CMOVERSP        CommandKind = 0x8021
-	CECHORQ         CommandKind = 0x0030
-	CECHORSP        CommandKind = 0x8030
-	NEVENTREPORTRQ  CommandKind = 0x0100
-	NEVENTREPORTRSP CommandKind = 0x8100
-	NGETRQ          CommandKind = 0x0110
-	NGETRSP         CommandKind = 0x8110
-	NSETRQ          CommandKind = 0x0120
-	NSETRSP         CommandKind = 0x8120
-	NACTIONRQ       CommandKind = 0x0130
-	NACTIONRSP      CommandKind = 0x8130
-	NCREATERQ       CommandKind = 0x0140
-	NCREATERSP      CommandKind = 0x8140
-	NDELETERQ       CommandKind = 0x0150
-	NDELETERSP      CommandKind = 0x8150
-	CCANCELRQ       CommandKind = 0x0FFF
-
-	CommandDataSetTypeNull    int = 0x101
-	CommandDataSetTypeNonNull int = 1
 )
 
 func EncodeCmd(cmd *Command) ([]byte, error) {
@@ -82,23 +53,23 @@ func (c *Command) encode(w *dicom.Writer) error {
 		return err
 	} else if err := writeElement(w, tags.MessageID, []int{c.MessageID}); err != nil {
 		return err
-	} else if err := writeElement(w, tags.CommandDataSetType, []int{c.CommandDataSetType}); err != nil {
+	} else if err := writeElement(w, tags.CommandDataSetType, []int{int(c.CommandDataSetType)}); err != nil {
 		return err
 	}
 
-	if c.CommandField == CSTORERQ || c.CommandField == CMOVERQ || c.CommandField == CGETRQ || c.CommandField == CFINDRQ {
+	if c.CommandField == commands.CSTORERQ || c.CommandField == commands.CMOVERQ || c.CommandField == commands.CGETRQ || c.CommandField == commands.CFINDRQ {
 		if err := writeElement(w, tags.Priority, []int{c.Priority}); err != nil {
 			return err
 		}
 	}
 
-	if c.CommandField == CMOVERQ {
+	if c.CommandField == commands.CMOVERQ {
 		if err := writeElement(w, tags.MoveDestination, []string{c.MoveDestination}); err != nil {
 			return err
 		}
 	}
 
-	if c.CommandField == CSTORERQ {
+	if c.CommandField == commands.CSTORERQ {
 		if err := writeElement(w, tags.AffectedSOPInstanceUID, c.AffectedSOPInstanceUID); err != nil {
 			return err
 		}
@@ -117,7 +88,7 @@ func (c *Command) encode(w *dicom.Writer) error {
 	return nil
 }
 
-func Decode(data []byte) (*Command, error) {
+func DecodeCmd(data []byte) (*Command, error) {
 	d, err := dicom.ParseUntilEOF(bytes.NewBuffer(data), nil)
 	if err != nil {
 		return nil, err
@@ -135,7 +106,7 @@ func Decode(data []byte) (*Command, error) {
 		return nil, err
 	}
 
-	if cmd.CommandField == CSTORERQ || cmd.CommandField == CMOVERQ || cmd.CommandField == CGETRQ || cmd.CommandField == CFINDRQ {
+	if cmd.CommandField == commands.CSTORERQ || cmd.CommandField == commands.CMOVERQ || cmd.CommandField == commands.CGETRQ || cmd.CommandField == commands.CFINDRQ {
 		if err := readElement(d, tags.Priority, cmd.Priority, true); err != nil {
 			return nil, err
 		}
@@ -152,7 +123,7 @@ func Decode(data []byte) (*Command, error) {
 		return nil, err
 	}
 
-	if cmd.CommandField == CSTORERQ {
+	if cmd.CommandField == commands.CSTORERQ {
 		if err := readElement(d, tags.AffectedSOPInstanceUID, cmd.AffectedSOPInstanceUID, true); err != nil {
 			return nil, err
 		}
@@ -161,18 +132,18 @@ func Decode(data []byte) (*Command, error) {
 	return cmd, nil
 }
 
-func Find(msgID int, sops []string, dsType int) *Command {
+func Find(msgID int, sops []string, dsType commands.DataSetType) *Command {
 	return &Command{
-		CommandField:        CFINDRQ,
+		CommandField:        commands.CFINDRQ,
 		MessageID:           msgID,
 		AffectedSOPClassUID: sops,
 		CommandDataSetType:  dsType,
 	}
 }
 
-func Get(msgID int, sops []string, dsType, priority int) *Command {
+func Get(msgID int, sops []string, dsType commands.DataSetType, priority int) *Command {
 	return &Command{
-		CommandField:        CGETRQ,
+		CommandField:        commands.CGETRQ,
 		MessageID:           msgID,
 		AffectedSOPClassUID: sops,
 		CommandDataSetType:  dsType,
@@ -180,9 +151,9 @@ func Get(msgID int, sops []string, dsType, priority int) *Command {
 	}
 }
 
-func Move(msgID int, sops []string, dsType, priority int, dst string) *Command {
+func Move(msgID int, sops []string, dsType commands.DataSetType, priority int, dst string) *Command {
 	return &Command{
-		CommandField:        CMOVERQ,
+		CommandField:        commands.CMOVERQ,
 		MessageID:           msgID,
 		AffectedSOPClassUID: sops,
 		CommandDataSetType:  dsType,
@@ -191,9 +162,9 @@ func Move(msgID int, sops []string, dsType, priority int, dst string) *Command {
 	}
 }
 
-func Store(msgID int, sops, inst []string, dsType, priority, id int, dst, title string) *Command {
+func Store(msgID int, sops, inst []string, dsType commands.DataSetType, priority, id int, dst, title string) *Command {
 	return &Command{
-		CommandField:                         CSTORERQ,
+		CommandField:                         commands.CSTORERQ,
 		MessageID:                            msgID,
 		AffectedSOPClassUID:                  sops,
 		CommandDataSetType:                   dsType,
