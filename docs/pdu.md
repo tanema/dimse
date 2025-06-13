@@ -1,5 +1,21 @@
 # PDU message descriptions
 
+## PDU DIMSE Flow
+It seems like since you can only have 128(255/2) presentation contexts you should
+mainly do one call at a time, or batch very few calls and then release. So one
+full command process looks like:
+
+- -> Assoc Request with one or more presentation context with ID, SOP and transfer syntax for types of data you will be handling.
+- <- Assoc Accept with accepted presentation contexts.
+- -> PDU Command(s) with AffectedSOPClassUID field that was added to the assoc request.
+- <- PDU Command Resp
+- <- PDU Data Resp
+- ...
+- <- PDU Last Data Resp
+- -> Release Request
+- <- Release Response
+
+
 ## ASSOCIATE-RQ
 association request
 
@@ -129,8 +145,8 @@ Release request and response are exactly the same
 
 | bytes     | Field name         | Datatype   | Description of field                |
 |-----------|--------------------|------------|-------------------------------------|
-| 1-4       | Item-length        | `uint8`    | number of bytes from the first byte of the following field to the last byte of the Presentation-data-value field. It shall be encoded as an unsigned binary number.
-| 5         | Presentation-context-ID|`uint8` | odd integers between 1 and 255, encoded as an unsigned binary number
+| 1-4       | Item-length        | `uint32`    | number of bytes from the first byte of the following field to the last byte of the Presentation-data-value field. It shall be encoded as an unsigned binary number.
+| 5         | Presentation-context-ID|`uint8` | odd integers between 1 and 255, encoded
 | 6-xxx     | Presentation-data-value|        | contain DICOM message information (command and/or Data Set) with a message control header
 
 ### Reject Reasons

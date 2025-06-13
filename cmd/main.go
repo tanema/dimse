@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"log"
 
 	"github.com/tanema/dimse"
@@ -19,12 +18,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("connection err: %v", err)
 	}
-	for {
-		select {
-		case err := <-client.Errors():
-			fmt.Println("err", err)
-		case evt := <-client.Events():
-			fmt.Println("evt", evt)
-		}
-	}
+	checkErr("echo", client.Echo())
+	client.Close()
 }

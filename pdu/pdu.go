@@ -1,4 +1,4 @@
-package dimse
+package pdu
 
 import (
 	"bytes"
@@ -13,7 +13,7 @@ type (
 	PDU        interface{ WritePayload(*pduEncoder) error }
 	SubItem    interface{ Write(*pduEncoder) error }
 	AAssociate struct {
-		Type            byte
+		Type            Type
 		ProtocolVersion uint16
 		CalledAETitle   string
 		CallingAETitle  string
@@ -27,12 +27,12 @@ type (
 	}
 	RoleSelectionSubItem struct {
 		SOPClassUID string
-		SCURole     byte
-		SCPRole     byte
+		SCURole     uint8
+		SCPRole     uint8
 	}
 	// Container for subitems that this package doesnt' support
 	SubItemUnsupported struct {
-		Type byte
+		Type Type
 		Data []byte
 	}
 	ImplementationClassUIDSubItem    struct{ Name string }
@@ -41,8 +41,8 @@ type (
 	AbstractSyntaxSubItem            struct{ Name string }
 	TransferSyntaxSubItem            struct{ Name string }
 	PresentationContextItem          struct {
-		Type      byte
-		ContextID byte
+		Type      ItemType
+		ContextID uint8
 		Result    PresentationContextResult
 		Items     []SubItem
 	}
@@ -53,12 +53,7 @@ type (
 		Source SourceType
 		Reason RejectReasonType
 	}
-	PresentationContextResult byte
-	RejectResultType          byte
-	RejectReasonType          byte
-	SourceType                byte
-	AbortReasonType           byte
-	AAbort                    struct {
+	AAbort struct {
 		Source SourceType
 		Reason AbortReasonType
 	}
@@ -66,7 +61,7 @@ type (
 		Items []PresentationDataValueItem
 	}
 	PresentationDataValueItem struct {
-		ContextID byte
+		ContextID uint8
 		Command   bool // Bit 7 (LSB): 1 means command 0 means data
 		Last      bool // Bit 6: 1 means last fragment. 0 means not last fragment.
 		Value     []byte
@@ -74,55 +69,10 @@ type (
 )
 
 const (
-	TypeAAssociateRq byte = 1 // A_ASSOCIATE_RQ association request
-	TypeAAssociateAc byte = 2 // A_ASSOCIATE_AC association accepted
-	TypeAAssociateRj byte = 3 // A_ASSOCIATE_RJ association rejuected
-	TypePDataTf      byte = 4 // P_DATA_TF      used once an association has been established to send DIMSE message data.
-	TypeAReleaseRq   byte = 5 // A_RELEASE_RQ   disassociation request
-	TypeAReleaseRp   byte = 6 // A_RELEASE_RP   disassociation response
-	TypeAAbort       byte = 7 // A_ABORT        disassociation without response.
-
-	// Possible Type field values for SubItem.
-	ItemTypeApplicationContext           byte = 0x10
-	ItemTypePresentationContextRequest   byte = 0x20
-	ItemTypePresentationContextResponse  byte = 0x21
-	ItemTypeAbstractSyntax               byte = 0x30
-	ItemTypeTransferSyntax               byte = 0x40
-	ItemTypeUserInformation              byte = 0x50
-	ItemTypeUserInformationMaximumLength byte = 0x51
-	ItemTypeImplementationClassUID       byte = 0x52
-	ItemTypeAsynchronousOperationsWindow byte = 0x53
-	ItemTypeRoleSelection                byte = 0x54
-	ItemTypeImplementationVersionName    byte = 0x55
-
-	CurrentProtocolVersion uint16 = 1
-
-	PresentationContextAccepted                                    PresentationContextResult = 0
-	PresentationContextUserRejection                               PresentationContextResult = 1
-	PresentationContextProviderRejectionNoReason                   PresentationContextResult = 2
-	PresentationContextProviderRejectionAbstractSyntaxNotSupported PresentationContextResult = 3
-	PresentationContextProviderRejectionTransferSyntaxNotSupported PresentationContextResult = 4
-
-	ResultRejectedPermanent RejectResultType = 1
-	ResultRejectedTransient RejectResultType = 2
-
-	RejectReasonNone                               RejectReasonType = 1
-	RejectReasonApplicationContextNameNotSupported RejectReasonType = 2
-	RejectReasonCallingAETitleNotRecognized        RejectReasonType = 3
-	RejectReasonCalledAETitleNotRecognized         RejectReasonType = 7
-
-	SourceULServiceUser                 SourceType = 1
-	SourceULServiceProviderACSE         SourceType = 2
-	SourceULServiceProviderPresentation SourceType = 3
-
-	AbortReasonNotSpecified             AbortReasonType = 0
-	AbortReasonUnexpectedPDU            AbortReasonType = 2
-	AbortReasonUnrecognizedPDUParameter AbortReasonType = 3
-	AbortReasonUnexpectedPDUParameter   AbortReasonType = 4
-	AbortReasonInvalidPDUParameterValue AbortReasonType = 5
-
 	// The app context for DICOM. The first item in the A-ASSOCIATE-RQ
-	DICOMApplicationContextItemName = "1.2.840.10008.3.1.1.1"
+	DICOMApplicationContextItemName        = "1.2.840.10008.3.1.1.1"
+	CurrentProtocolVersion          uint16 = 1
+	DefaultMaxPDUSize               uint32 = 4 << 20
 )
 
 func (v *UserInformationItem) Write(w *pduEncoder) error {
@@ -179,7 +129,7 @@ func (item *SubItemUnsupported) Write(w *pduEncoder) error {
 	)
 }
 
-func encSubItemWithName(w *pduEncoder, itemType byte, name string) error {
+func encSubItemWithName(w *pduEncoder, itemType ItemType, name string) error {
 	return w.Write(
 		itemType,
 		encSkip(1),
@@ -236,7 +186,7 @@ func (v *PresentationDataValueItem) Write(w *pduEncoder) error {
 
 // EncodePDU serializes "pdu" into []byte.
 func EncodePDU(pdu PDU) ([]byte, error) {
-	var pduType byte
+	var pduType Type
 	switch n := pdu.(type) {
 	case *AAssociate:
 		pduType = n.Type
@@ -259,7 +209,7 @@ func EncodePDU(pdu PDU) ([]byte, error) {
 	}
 
 	var header [6]byte // First 6 bytes of buf.
-	header[0] = byte(pduType)
+	header[0] = uint8(pduType)
 	header[1] = 0 // Reserved.
 	binary.BigEndian.PutUint32(header[2:6], uint32(buf.Len()))
 	return append(header[:], buf.Bytes()...), nil
@@ -268,7 +218,7 @@ func EncodePDU(pdu PDU) ([]byte, error) {
 // EncodePDU reads a "pdu" from a stream. maxPDUSize defines the maximum
 // possible PDU size, in bytes, accepted by the caller.
 func ReadPDU(in io.Reader) (PDU, error) {
-	var pduType byte
+	var pduType Type
 	var length uint32
 	d := newDecoder(in)
 
@@ -319,7 +269,7 @@ func ReadPDU(in io.Reader) (PDU, error) {
 		for {
 			item := PresentationDataValueItem{}
 			var length uint32
-			var header byte
+			var header uint8
 			if err := d.Read(&length, &item.ContextID, &header); err != nil {
 				if errors.Is(err, io.EOF) {
 					return pdtf, nil
@@ -347,7 +297,7 @@ func ReadPDU(in io.Reader) (PDU, error) {
 }
 
 func decodeSubItem(d *pduDecoder) (SubItem, error) {
-	var itemType byte
+	var itemType ItemType
 	var length uint16
 	if err := d.Read(&itemType, encSkip(1), &length); err != nil {
 		return nil, err
@@ -401,6 +351,7 @@ func decodeSubItem(d *pduDecoder) (SubItem, error) {
 		} else if v.ContextID%2 != 1 {
 			return nil, fmt.Errorf("PresentationContextItem ID must be odd, but found %x", v.ContextID)
 		}
+		fmt.Printf("PresentationContextItem ID: %v Type: %v Result: %v\n", v.ContextID, v.Type, v.Result)
 		for {
 			item, err := decodeSubItem(d)
 			if err != nil {

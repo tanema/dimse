@@ -1,4 +1,4 @@
-package dimse
+package pdu
 
 import (
 	"encoding/binary"
