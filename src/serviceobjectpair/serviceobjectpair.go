@@ -481,4 +481,21 @@ var (
 	SubstanceAdministrationClasses = []string{ProductCharacteristicsQuery, SubstanceApprovalQuery}
 	UnifiedProcedureStepClasses    = []string{UnifiedProcedureStepPush, UnifiedProcedureStepWatch, UnifiedProcedureStepPull, UnifiedProcedureStepEvent, UnifiedProcedureStepQuery}
 	VerificationClasses            = []string{Verification}
+	QRFindClasses                  = []string{
+		PatientRootQueryRetrieveInformationModelFind,
+		StudyRootQueryRetrieveInformationModelFind,
+		PatientStudyOnlyQueryRetrieveInformationModelFind,
+		ModalityWorklistInformationFind,
+	}
+	QRMoveClasses = []string{
+		PatientRootQueryRetrieveInformationModelMove,
+		StudyRootQueryRetrieveInformationModelMove,
+		PatientStudyOnlyQueryRetrieveInformationModelMove,
+	}
+	QRGetClasses = append([]string{
+		PatientRootQueryRetrieveInformationModelGet,
+		StudyRootQueryRetrieveInformationModelGet,
+		PatientStudyOnlyQueryRetrieveInformationModelGet,
+	}, StorageClasses...)
+	AllClasses = append([]string{Verification}, StorageClasses...)
 )

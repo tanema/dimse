@@ -14,8 +14,8 @@ import (
 	"github.com/suyashkumar/dicom/pkg/dicomio"
 	"github.com/suyashkumar/dicom/pkg/tag"
 	"github.com/suyashkumar/dicom/pkg/vrraw"
-	"github.com/tanema/dimse/obj/commands"
-	"github.com/tanema/dimse/obj/tags"
+	"github.com/tanema/dimse/src/commands"
+	"github.com/tanema/dimse/src/tags"
 )
 
 type (

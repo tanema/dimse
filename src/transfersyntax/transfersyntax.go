@@ -47,3 +47,10 @@ const (
 	SMPTEST211030PCMDigitalAudio                    = "1.2.840.10008.1.2.7.3"
 	DeflatedImageFrameCompression                   = "1.2.840.10008.1.2.8.1"
 )
+
+var StandardSyntaxes = []string{
+	TSImplicitVRLittleEndian,
+	TSExplicitVRLittleEndian,
+	TSExplicitVRBigEndian,
+	TSDeflatedExplicitVRLittleEndian,
+}

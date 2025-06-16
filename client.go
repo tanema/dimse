@@ -7,9 +7,10 @@ import (
 	"slices"
 	"sync/atomic"
 
-	"github.com/tanema/dimse/obj"
-	"github.com/tanema/dimse/obj/commands"
-	"github.com/tanema/dimse/pdu"
+	"github.com/tanema/dimse/src/commands"
+	"github.com/tanema/dimse/src/pdu"
+	"github.com/tanema/dimse/src/serviceobjectpair"
+	"github.com/tanema/dimse/src/transfersyntax"
 )
 
 type (
@@ -89,7 +90,7 @@ func (c *Client) Dispatch(cmd *Command) (*Command, error) {
 
 func (c *Client) associate(sopsClasses []string, transfersyntaxes []string) (*pdu.ContextManager, error) {
 	if len(transfersyntaxes) == 0 {
-		transfersyntaxes = obj.StandardTransferSyntaxes
+		transfersyntaxes = transfersyntax.StandardSyntaxes
 	}
 
 	assocPDI, ctxManager := pdu.CreateAssoc(sopsClasses, transfersyntaxes)
@@ -183,7 +184,7 @@ func (c *Client) Echo() error {
 	resp, err := c.Dispatch(&Command{
 		CommandField:        commands.CECHORQ,
 		MessageID:           msgID,
-		AffectedSOPClassUID: obj.VerificationClasses,
+		AffectedSOPClassUID: serviceobjectpair.VerificationClasses,
 		CommandDataSetType:  commands.Null,
 	})
 	if err != nil {
