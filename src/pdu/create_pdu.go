@@ -29,14 +29,35 @@ func CreateRelease() PDU {
 	return &AReleaseRq{}
 }
 
-func CreatePdata(contextID uint8, val []byte) []PDU {
-	// DefaultMaxPDUSize
-	return []PDU{&PDataTf{
-		Items: []PresentationDataValueItem{{
-			ContextID: contextID, // need to look up associated presentation context
-			Command:   true,
-			Last:      true,
-			Value:     val,
-		}},
-	}}
+func CreateAbort() PDU {
+	return &AAbort{
+		Source: SourceULServiceUser,
+		Reason: AbortReasonNotSpecified,
+	}
+}
+
+func CreatePdata(ctxID uint8, cmd bool, data []byte) []PDU {
+	var pdus []PDU
+	// two byte header overhead.
+	maxChunkSize := int(DefaultMaxPDUSize - 8)
+	for len(data) > 0 {
+		chunkSize := len(data)
+		if chunkSize > maxChunkSize {
+			chunkSize = maxChunkSize
+		}
+		chunk := data[0:chunkSize]
+		data = data[chunkSize:]
+		lastChunk := len(data) == 0
+		pdus = append(pdus, &PDataTf{
+			Items: []PresentationDataValueItem{
+				{
+					ContextID: ctxID,
+					Command:   cmd,
+					Last:      lastChunk, // Set later.
+					Value:     chunk,
+				},
+			},
+		})
+	}
+	return pdus
 }

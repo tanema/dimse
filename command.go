@@ -15,10 +15,20 @@ import (
 	"github.com/suyashkumar/dicom/pkg/tag"
 	"github.com/suyashkumar/dicom/pkg/vrraw"
 	"github.com/tanema/dimse/src/commands"
+	"github.com/tanema/dimse/src/query"
 	"github.com/tanema/dimse/src/tags"
 )
 
 type (
+	// Query is a captured, validated query scope for find, get, move, and store
+	Query struct {
+		client   *Client
+		payload  []byte
+		Level    query.Level
+		Filter   []*dicom.Element
+		Priority int // CStore CMove CGet CFind
+	}
+	// Command captures both a request and response of a PDU command
 	Command struct {
 		Dataset             dicom.Dataset
 		CommandField        commands.Kind
@@ -184,50 +194,6 @@ func decodeCommand(data []byte) (dicom.Dataset, error) {
 		})
 	}
 	return d, nil
-}
-
-func Find(msgID int, sops []string, dsType commands.DataSetType) *Command {
-	return &Command{
-		CommandField:        commands.CFINDRQ,
-		MessageID:           msgID,
-		AffectedSOPClassUID: sops,
-		CommandDataSetType:  dsType,
-	}
-}
-
-func Get(msgID int, sops []string, dsType commands.DataSetType, priority int) *Command {
-	return &Command{
-		CommandField:        commands.CGETRQ,
-		MessageID:           msgID,
-		AffectedSOPClassUID: sops,
-		CommandDataSetType:  dsType,
-		Priority:            priority,
-	}
-}
-
-func Move(msgID int, sops []string, dsType commands.DataSetType, priority int, dst string) *Command {
-	return &Command{
-		CommandField:        commands.CMOVERQ,
-		MessageID:           msgID,
-		AffectedSOPClassUID: sops,
-		CommandDataSetType:  dsType,
-		Priority:            priority,
-		MoveDestination:     dst,
-	}
-}
-
-func Store(msgID int, sops, inst []string, dsType commands.DataSetType, priority, id int, dst, title string) *Command {
-	return &Command{
-		CommandField:                         commands.CSTORERQ,
-		MessageID:                            msgID,
-		AffectedSOPClassUID:                  sops,
-		CommandDataSetType:                   dsType,
-		Priority:                             priority,
-		MoveDestination:                      dst,
-		AffectedSOPInstanceUID:               inst,
-		MoveOriginatorApplicationEntityTitle: title,
-		MoveOriginatorMessageID:              id,
-	}
 }
 
 func writeElement(w *dicom.Writer, t tag.Tag, val any) error {

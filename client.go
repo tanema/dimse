@@ -2,13 +2,17 @@ package dimse
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"net"
 	"slices"
 	"sync/atomic"
 
+	"github.com/suyashkumar/dicom"
+	"github.com/suyashkumar/dicom/pkg/tag"
 	"github.com/tanema/dimse/src/commands"
 	"github.com/tanema/dimse/src/pdu"
+	"github.com/tanema/dimse/src/query"
 	"github.com/tanema/dimse/src/serviceobjectpair"
 	"github.com/tanema/dimse/src/transfersyntax"
 )
@@ -75,14 +79,17 @@ func (c *Client) Close() error {
 	return c.conn.Close()
 }
 
-func (c *Client) Dispatch(cmd *Command) (*Command, error) {
-	sops := collectSOPs(cmd)
-	ctxMan, err := c.associate(sops, nil)
+func (c *Client) Dispatch(cmd *Command, payload []byte) (*Command, error) {
+	if cmd.CommandDataSetType == commands.NonNull && len(payload) == 0 {
+		return nil, fmt.Errorf("empty payload provided to a command that requires a payload")
+	}
+	ctxMan, err := c.associate(collectSOPs(cmd), nil)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.pdata(ctxMan, cmd)
+	resp, err := c.pdata(ctxMan, cmd, payload)
 	if err != nil {
+		c.abort()
 		return nil, err
 	}
 	return resp, c.realease()
@@ -132,7 +139,11 @@ func (c *Client) realease() error {
 	}
 }
 
-func (c *Client) pdata(ctxMan *pdu.ContextManager, cmd *Command) (*Command, error) {
+func (c *Client) abort() {
+	c.sendPDU(pdu.CreateAbort())
+}
+
+func (c *Client) pdata(ctxMan *pdu.ContextManager, cmd *Command, payload []byte) (*Command, error) {
 	var ctxID uint8
 	for _, classUID := range cmd.AffectedSOPClassUID {
 		if pctx, err := ctxMan.GetWithSOP(classUID); err == nil {
@@ -152,8 +163,11 @@ func (c *Client) pdata(ctxMan *pdu.ContextManager, cmd *Command) (*Command, erro
 	if err != nil {
 		return nil, err
 	}
-	// TODO need ContextID, and to split up into multiple
-	pdatas := pdu.CreatePdata(ctxID, value)
+	// encode the command first and then send data along
+	pdatas := pdu.CreatePdata(ctxID, true, value)
+	if cmd.CommandDataSetType == commands.NonNull {
+		pdatas = append(pdatas, pdu.CreatePdata(ctxID, false, payload)...)
+	}
 	for _, pd := range pdatas {
 		if err := c.sendPDU(pd); err != nil {
 			return nil, err
@@ -179,6 +193,8 @@ func (c *Client) pdata(ctxMan *pdu.ContextManager, cmd *Command) (*Command, erro
 	}
 }
 
+// Echo will issue an echo command and will return an error if something went wrong.
+// No error will be returned if the error command returned successfully.
 func (c *Client) Echo() error {
 	msgID := int(c.nextMsgID())
 	resp, err := c.Dispatch(&Command{
@@ -186,7 +202,7 @@ func (c *Client) Echo() error {
 		MessageID:           msgID,
 		AffectedSOPClassUID: serviceobjectpair.VerificationClasses,
 		CommandDataSetType:  commands.Null,
-	})
+	}, nil)
 	if err != nil {
 		return err
 	}
@@ -198,6 +214,68 @@ func (c *Client) Echo() error {
 	return nil
 }
 
+func (c *Client) Query(level query.Level, q []*dicom.Element, priority int) (*Query, error) {
+	if len(q) == 0 {
+		return nil, fmt.Errorf("Query: empty query")
+	}
+	query := &Query{
+		client:   c,
+		Level:    level,
+		Filter:   q,
+		Priority: priority,
+	}
+	return query, query.encodePayload()
+}
+
+func (q *Query) Find() error {
+	_, err := q.client.Dispatch(&Command{
+		CommandField:        commands.CFINDRQ,
+		MessageID:           int(q.client.nextMsgID()),
+		AffectedSOPClassUID: []string{q.sopForCmd(commands.CFINDRQ)},
+		CommandDataSetType:  commands.NonNull,
+		Priority:            q.Priority,
+	}, q.payload)
+	return err
+}
+
+func (q *Query) Get() error {
+	_, err := q.client.Dispatch(&Command{
+		CommandField:        commands.CGETRQ,
+		MessageID:           int(q.client.nextMsgID()),
+		AffectedSOPClassUID: []string{q.sopForCmd(commands.CGETRQ)},
+		CommandDataSetType:  commands.NonNull,
+		Priority:            q.Priority,
+	}, q.payload)
+	return err
+}
+
+func (q *Query) Move(dst string) error {
+	_, err := q.client.Dispatch(&Command{
+		CommandField:        commands.CMOVERQ,
+		MessageID:           int(q.client.nextMsgID()),
+		AffectedSOPClassUID: []string{q.sopForCmd(commands.CMOVERQ)},
+		Priority:            q.Priority,
+		MoveDestination:     dst,
+		CommandDataSetType:  commands.NonNull,
+	}, q.payload)
+	return err
+}
+
+func (q *Query) Store(inst []string, id int, dst, title string) error {
+	_, err := q.client.Dispatch(&Command{
+		CommandField:                         commands.CSTORERQ,
+		MessageID:                            int(q.client.nextMsgID()),
+		AffectedSOPClassUID:                  []string{q.sopForCmd(commands.CMOVERQ)},
+		CommandDataSetType:                   commands.NonNull,
+		Priority:                             q.Priority,
+		MoveDestination:                      dst,
+		AffectedSOPInstanceUID:               inst,
+		MoveOriginatorApplicationEntityTitle: title,
+		MoveOriginatorMessageID:              id,
+	}, q.payload)
+	return err
+}
+
 // collectSOPs will collect SOPs from all commands to be put into the association
 // request, and ensure that they are unique.
 func collectSOPs(cmds ...*Command) []string {
@@ -207,4 +285,66 @@ func collectSOPs(cmds ...*Command) []string {
 	}
 	slices.Sort(sops)
 	return slices.Compact(sops)
+}
+
+func (q *Query) sopForCmd(kind commands.Kind) string {
+	switch q.Level {
+	case query.Patient:
+		switch kind {
+		case commands.CFINDRQ:
+			return serviceobjectpair.PatientRootQueryRetrieveInformationModelFind
+		case commands.CGETRQ:
+			return serviceobjectpair.PatientRootQueryRetrieveInformationModelGet
+		case commands.CMOVERQ:
+			return serviceobjectpair.PatientRootQueryRetrieveInformationModelMove
+		}
+	case query.Study, query.Series:
+		switch kind {
+		case commands.CFINDRQ:
+			return serviceobjectpair.StudyRootQueryRetrieveInformationModelFind
+		case commands.CGETRQ:
+			return serviceobjectpair.StudyRootQueryRetrieveInformationModelGet
+		case commands.CMOVERQ:
+			return serviceobjectpair.StudyRootQueryRetrieveInformationModelMove
+		}
+	}
+	return ""
+}
+
+func (q *Query) encodePayload() error {
+	foundQRLevel := false
+	buf := bytes.NewBuffer([]byte{})
+	w, err := dicom.NewWriter(buf)
+	if err != nil {
+		return err
+	}
+	w.SetTransferSyntax(binary.LittleEndian, true)
+	for _, elem := range q.Filter {
+		if elem.Tag == tag.QueryRetrieveLevel {
+			foundQRLevel = true
+		}
+		if err := w.WriteElement(elem); err != nil {
+			return err
+		}
+	}
+	if !foundQRLevel {
+		var qrLevelString string
+		switch q.Level {
+		case query.Patient:
+			qrLevelString = "PATIENT"
+		case query.Study:
+			qrLevelString = "STUDY"
+		case query.Series:
+			qrLevelString = "SERIES"
+		}
+		elem, err := dicom.NewElement(tag.QueryRetrieveLevel, qrLevelString)
+		if err != nil {
+			return err
+		}
+		if err := w.WriteElement(elem); err != nil {
+			return err
+		}
+	}
+	q.payload = buf.Bytes()
+	return nil
 }
