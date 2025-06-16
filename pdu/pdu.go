@@ -351,7 +351,6 @@ func decodeSubItem(d *pduDecoder) (SubItem, error) {
 		} else if v.ContextID%2 != 1 {
 			return nil, fmt.Errorf("PresentationContextItem ID must be odd, but found %x", v.ContextID)
 		}
-		fmt.Printf("PresentationContextItem ID: %v Type: %v Result: %v\n", v.ContextID, v.Type, v.Result)
 		for {
 			item, err := decodeSubItem(d)
 			if err != nil {

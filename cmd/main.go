@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 
 	"github.com/tanema/dimse"
@@ -19,5 +20,6 @@ func main() {
 		log.Fatalf("connection err: %v", err)
 	}
 	checkErr("echo", client.Echo())
+	fmt.Println("echo successfully returned")
 	client.Close()
 }

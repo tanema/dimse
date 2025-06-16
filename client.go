@@ -51,7 +51,6 @@ func (c *Client) listen() {
 		}
 		if n > 0 {
 			pdu, err := pdu.ReadPDU(bytes.NewBuffer(data[:n]))
-			fmt.Printf("recv: %T %v\n", pdu, err)
 			c.events <- readResult{evt: pdu, err: err}
 		}
 	}
@@ -62,7 +61,6 @@ func (c *Client) sendPDU(msg pdu.PDU) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("send: %T\n", msg)
 	return c.send(data)
 }
 
@@ -76,14 +74,17 @@ func (c *Client) Close() error {
 	return c.conn.Close()
 }
 
-func (c *Client) Dispatch(cmd *Command) error {
+func (c *Client) Dispatch(cmd *Command) (*Command, error) {
 	sops := collectSOPs(cmd)
-	if ctxMan, err := c.associate(sops, nil); err != nil {
-		return err
-	} else if err := c.pdata(ctxMan, cmd); err != nil {
-		return err
+	ctxMan, err := c.associate(sops, nil)
+	if err != nil {
+		return nil, err
 	}
-	return c.realease()
+	resp, err := c.pdata(ctxMan, cmd)
+	if err != nil {
+		return nil, err
+	}
+	return resp, c.realease()
 }
 
 func (c *Client) associate(sopsClasses []string, transfersyntaxes []string) (*pdu.ContextManager, error) {
@@ -130,7 +131,7 @@ func (c *Client) realease() error {
 	}
 }
 
-func (c *Client) pdata(ctxMan *pdu.ContextManager, cmd *Command) error {
+func (c *Client) pdata(ctxMan *pdu.ContextManager, cmd *Command) (*Command, error) {
 	var ctxID uint8
 	for _, classUID := range cmd.AffectedSOPClassUID {
 		if pctx, err := ctxMan.GetWithSOP(classUID); err == nil {
@@ -143,48 +144,57 @@ func (c *Client) pdata(ctxMan *pdu.ContextManager, cmd *Command) error {
 	// and feed it into the associate call. The only time this could happen is if
 	// the server rejected a specific presentation context.
 	if ctxID == 0 {
-		return fmt.Errorf("Could not find an associated presentation context item for command which means the server rejected the AffectedSOPClassUID you requested.")
+		return nil, fmt.Errorf("Could not find an associated presentation context item for command which means the server rejected the AffectedSOPClassUID you requested.")
 	}
 
 	value, err := EncodeCmd(cmd)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// TODO need ContextID, and to split up into multiple
 	pdatas := pdu.CreatePdata(ctxID, value)
 	for _, pd := range pdatas {
 		if err := c.sendPDU(pd); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	for {
 		evt := <-c.events
 		if evt.err != nil {
-			return evt.err
+			return nil, evt.err
 		}
 		switch tevt := evt.evt.(type) {
 		case *pdu.PDataTf:
 			for _, item := range tevt.Items {
-				fmt.Printf("ContextID: %v Command: %v Last: %v Value: %v\n", item.ContextID, item.Command, item.Last, len(item.Value))
 				cmd, err := DecodeCmd(item.Value)
-				fmt.Println(cmd, err)
+				return cmd, err
 			}
-			return nil
+			return nil, nil
 		case *pdu.AAbort:
-			return fmt.Errorf("aborted pdata. Reason: %s Source: %s", tevt.Reason, tevt.Source)
+			return nil, fmt.Errorf("aborted pdata. Reason: %s Source: %s", tevt.Reason, tevt.Source)
 		default:
-			return fmt.Errorf("unexpected message %T after sending release", evt.evt)
+			return nil, fmt.Errorf("unexpected message %T after sending release", evt.evt)
 		}
 	}
 }
 
 func (c *Client) Echo() error {
-	return c.Dispatch(&Command{
+	msgID := int(c.nextMsgID())
+	resp, err := c.Dispatch(&Command{
 		CommandField:        commands.CECHORQ,
-		MessageID:           int(c.nextMsgID()),
+		MessageID:           msgID,
 		AffectedSOPClassUID: obj.VerificationClasses,
 		CommandDataSetType:  commands.Null,
 	})
+	if err != nil {
+		return err
+	}
+	if resp.CommandField != commands.CECHORSP {
+		return fmt.Errorf("received %s in response to echo", resp.CommandField)
+	} else if resp.MessageID != msgID {
+		return fmt.Errorf("received %v message id but sent %v", resp.MessageID, msgID)
+	}
+	return nil
 }
 
 // collectSOPs will collect SOPs from all commands to be put into the association
