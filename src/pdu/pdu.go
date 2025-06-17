@@ -10,7 +10,10 @@ import (
 )
 
 type (
-	PDU        interface{ WritePayload(*pduEncoder) error }
+	PDU interface {
+		String() string
+		WritePayload(*pduEncoder) error
+	}
 	SubItem    interface{ Write(*pduEncoder) error }
 	AAssociate struct {
 		Type            Type
@@ -381,7 +384,10 @@ func decodeSubItem(d *pduDecoder) (SubItem, error) {
 }
 
 func (pdu *AReleaseRq) WritePayload(w *pduEncoder) error { return w.Write(encSkip(4)) }
+func (pdu *AReleaseRq) String() string                   { return fmt.Sprintf("Release Request") }
+
 func (pdu *AReleaseRp) WritePayload(w *pduEncoder) error { return w.Write(encSkip(4)) }
+func (pdu *AReleaseRp) String() string                   { return fmt.Sprintf("Release Response") }
 
 func (pdu *AAssociate) WritePayload(w *pduEncoder) error {
 	if pdu.Type == 0 || pdu.CalledAETitle == "" || pdu.CallingAETitle == "" {
@@ -405,13 +411,19 @@ func (pdu *AAssociate) WritePayload(w *pduEncoder) error {
 	return nil
 }
 
+func (pdu *AAssociate) String() string {
+	return fmt.Sprintf("%s", pdu.Type)
+}
+
 func (pdu *AAssociateRj) WritePayload(w *pduEncoder) error {
 	return w.Write(encSkip(1), &pdu.Result, &pdu.Source, &pdu.Reason)
 }
+func (pdu *AAssociateRj) String() string { return fmt.Sprintf("Associate Rejection") }
 
 func (pdu *AAbort) WritePayload(w *pduEncoder) error {
 	return w.Write(encSkip(2), &pdu.Source, &pdu.Reason)
 }
+func (pdu *AAbort) String() string { return fmt.Sprintf("Abort") }
 
 func (pdu *PDataTf) WritePayload(w *pduEncoder) error {
 	for _, item := range pdu.Items {
@@ -421,6 +433,8 @@ func (pdu *PDataTf) WritePayload(w *pduEncoder) error {
 	}
 	return nil
 }
+
+func (pdu *PDataTf) String() string { return fmt.Sprintf("PData") }
 
 // padString pads the string with " " up to the given length.
 func padString(v string, length int) string {

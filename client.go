@@ -30,17 +30,33 @@ type (
 	}
 )
 
-func Connect(addr string) (*Client, error) {
-	conn, err := net.Dial("tcp", addr)
+func NewClient(addr string) (*Client, error) {
+	testconn, err := net.Dial("tcp", addr)
 	if err != nil {
 		return nil, err
 	}
-	client := &Client{
-		conn:   conn,
+	testconn.Close()
+
+	return &Client{
+		addr:   addr,
 		events: make(chan readResult),
+	}, nil
+}
+
+func (c *Client) connect() error {
+	conn, err := net.Dial("tcp", c.addr)
+	if err != nil {
+		return err
 	}
-	go client.listen()
-	return client, nil
+	c.conn = conn
+	go c.listen()
+	return nil
+}
+
+func (c *Client) disconnect() error {
+	err := c.conn.Close()
+	c.conn = nil
+	return err
 }
 
 func (c *Client) nextMsgID() int32 {
@@ -56,6 +72,7 @@ func (c *Client) listen() {
 		}
 		if n > 0 {
 			pdu, err := pdu.ReadPDU(bytes.NewBuffer(data[:n]))
+			fmt.Printf("recv: %s\n", pdu)
 			c.events <- readResult{evt: pdu, err: err}
 		}
 	}
@@ -66,23 +83,30 @@ func (c *Client) sendPDU(msg pdu.PDU) error {
 	if err != nil {
 		return err
 	}
+	fmt.Printf("send: %s\n", msg)
 	return c.send(data)
 }
 
 func (c *Client) send(body []byte) error {
+	if c.conn == nil {
+		return fmt.Errorf("client is not connected to server")
+	}
 	_, err := c.conn.Write(body)
 	return err
 }
 
 func (c *Client) Close() error {
 	close(c.events)
-	return c.conn.Close()
+	return nil
 }
 
 func (c *Client) Dispatch(cmd *Command, payload []byte) (*Command, error) {
-	if cmd.CommandDataSetType == commands.NonNull && len(payload) == 0 {
+	if cmd.CommandDataSetType != commands.Null && len(payload) == 0 {
 		return nil, fmt.Errorf("empty payload provided to a command that requires a payload")
+	} else if err := c.connect(); err != nil {
+		return nil, err
 	}
+	defer c.disconnect()
 	ctxMan, err := c.associate(collectSOPs(cmd), nil)
 	if err != nil {
 		return nil, err
@@ -165,7 +189,7 @@ func (c *Client) pdata(ctxMan *pdu.ContextManager, cmd *Command, payload []byte)
 	}
 	// encode the command first and then send data along
 	pdatas := pdu.CreatePdata(ctxID, true, value)
-	if cmd.CommandDataSetType == commands.NonNull {
+	if cmd.CommandDataSetType != commands.Null {
 		pdatas = append(pdatas, pdu.CreatePdata(ctxID, false, payload)...)
 	}
 	for _, pd := range pdatas {
@@ -173,6 +197,44 @@ func (c *Client) pdata(ctxMan *pdu.ContextManager, cmd *Command, payload []byte)
 			return nil, err
 		}
 	}
+
+	resp, err := c.readPDataCmd()
+	if err != nil {
+		return nil, err
+	}
+	if resp.CommandDataSetType != commands.Null {
+		_, err := c.readPDataChunks()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return resp, nil
+}
+
+func (c *Client) readPDataCmd() (*Command, error) {
+	evt := <-c.events
+	if evt.err != nil {
+		return nil, evt.err
+	}
+	switch tevt := evt.evt.(type) {
+	case *pdu.PDataTf:
+		if len(tevt.Items) != 1 {
+			return nil, fmt.Errorf("unexpected length of items in pdata command message")
+		}
+		item := tevt.Items[0]
+		if !item.Command || !item.Last {
+			return nil, fmt.Errorf("unexpected command formatting")
+		}
+		return DecodeCmd(item.Value)
+	case *pdu.AAbort:
+		return nil, fmt.Errorf("aborted pdata. Reason: %s Source: %s", tevt.Reason, tevt.Source)
+	default:
+		return nil, fmt.Errorf("unexpected message %T after sending release", evt.evt)
+	}
+}
+
+func (c *Client) readPDataChunks() ([]byte, error) {
+	data := []byte{}
 	for {
 		evt := <-c.events
 		if evt.err != nil {
@@ -181,10 +243,14 @@ func (c *Client) pdata(ctxMan *pdu.ContextManager, cmd *Command, payload []byte)
 		switch tevt := evt.evt.(type) {
 		case *pdu.PDataTf:
 			for _, item := range tevt.Items {
-				cmd, err := DecodeCmd(item.Value)
-				return cmd, err
+				if item.Command {
+					return nil, fmt.Errorf("unexpected command in data chunks")
+				}
+				data = append(data, item.Value...)
+				if item.Last {
+					return data, nil
+				}
 			}
-			return nil, nil
 		case *pdu.AAbort:
 			return nil, fmt.Errorf("aborted pdata. Reason: %s Source: %s", tevt.Reason, tevt.Source)
 		default:
@@ -214,17 +280,21 @@ func (c *Client) Echo() error {
 	return nil
 }
 
-func (c *Client) Query(level query.Level, q []*dicom.Element, priority int) (*Query, error) {
+func (c *Client) Query(level query.Level, q []*dicom.Element) (*Query, error) {
 	if len(q) == 0 {
 		return nil, fmt.Errorf("Query: empty query")
 	}
 	query := &Query{
-		client:   c,
-		Level:    level,
-		Filter:   q,
-		Priority: priority,
+		client: c,
+		Level:  level,
+		Filter: q,
 	}
 	return query, query.encodePayload()
+}
+
+func (q *Query) SetPriority(p int) *Query {
+	q.Priority = p
+	return q
 }
 
 func (q *Query) Find() error {
@@ -337,7 +407,7 @@ func (q *Query) encodePayload() error {
 		case query.Series:
 			qrLevelString = "SERIES"
 		}
-		elem, err := dicom.NewElement(tag.QueryRetrieveLevel, qrLevelString)
+		elem, err := dicom.NewElement(tag.QueryRetrieveLevel, []string{qrLevelString})
 		if err != nil {
 			return err
 		}
