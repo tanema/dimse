@@ -34,10 +34,11 @@ func main() {
 	checkErr("find", err)
 
 	log.Printf("Got find response, found %v docs\n", len(data))
-	for _, doc := range data {
+	for i, doc := range data {
+		log.Printf("-> doc %v\n", i)
 		for _, e := range doc.Elements {
 			info, _ := tag.Find(e.Tag)
-			log.Println("-> %v = %v", info.Name, e.Value)
+			log.Printf("\t-> %v = %v\n", info.Name, e.Value)
 		}
 	}
 
