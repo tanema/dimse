@@ -1,6 +1,11 @@
 package pdu
 
-func CreateAssoc(sopsClasses []string, transfersyntaxes []string) (PDU, *ContextManager) {
+import (
+	"github.com/tanema/dimse/src/serviceobjectpair"
+	"github.com/tanema/dimse/src/transfersyntax"
+)
+
+func CreateAssoc(sopsClasses []serviceobjectpair.UID, transfersyntaxes []transfersyntax.UID) (PDU, *ContextManager) {
 	assoc := &AAssociate{
 		Type:            TypeAAssociateRq,
 		ProtocolVersion: CurrentProtocolVersion,

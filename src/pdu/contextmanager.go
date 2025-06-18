@@ -1,18 +1,24 @@
 package pdu
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/tanema/dimse/src/serviceobjectpair"
+	"github.com/tanema/dimse/src/transfersyntax"
+)
 
 type (
 	ContextManager struct {
 		contextID   uint8
 		idToContext map[uint8]*PresentationContext
-		sopToID     map[string]uint8
+		sopToID     map[serviceobjectpair.UID]uint8
 	}
 	PresentationContext struct {
-		ContextID         uint8
-		ServiceObjectPair string
-		TransferSyntaxes  []string
-		Accepted          bool
+		ContextID              uint8
+		ServiceObjectPair      serviceobjectpair.UID
+		TransferSyntaxes       []transfersyntax.UID
+		Accepted               bool
+		AcceptedTransferSyntax transfersyntax.UID
 	}
 )
 
@@ -20,11 +26,11 @@ func NewContextManager() *ContextManager {
 	return &ContextManager{
 		contextID:   1,
 		idToContext: map[uint8]*PresentationContext{},
-		sopToID:     map[string]uint8{},
+		sopToID:     map[serviceobjectpair.UID]uint8{},
 	}
 }
 
-func (cm *ContextManager) Add(sop string, ts []string) *PresentationContext {
+func (cm *ContextManager) Add(sop serviceobjectpair.UID, ts []transfersyntax.UID) *PresentationContext {
 	pc := &PresentationContext{
 		ContextID:         cm.contextID,
 		ServiceObjectPair: sop,
@@ -37,16 +43,17 @@ func (cm *ContextManager) Add(sop string, ts []string) *PresentationContext {
 	return pc
 }
 
-func (cm *ContextManager) Accept(ctxID uint8) error {
+func (cm *ContextManager) Accept(ctxID uint8, ts transfersyntax.UID) error {
 	pc, found := cm.idToContext[ctxID]
 	if !found {
 		return fmt.Errorf("ctxID not register in context manager")
 	}
 	pc.Accepted = true
+	pc.AcceptedTransferSyntax = ts
 	return nil
 }
 
-func (cm *ContextManager) GetWithSOP(sop string) (*PresentationContext, error) {
+func (cm *ContextManager) GetWithSOP(sop serviceobjectpair.UID) (*PresentationContext, error) {
 	ctxID, found := cm.sopToID[sop]
 	if !found {
 		return nil, fmt.Errorf("sop %v not register in context manager", sop)
@@ -63,9 +70,9 @@ func (cm *ContextManager) GetWithCtxID(id uint8) (*PresentationContext, error) {
 }
 
 func (p *PresentationContext) ToPCI() *PresentationContextItem {
-	syntaxItems := []SubItem{&AbstractSyntaxSubItem{Name: p.ServiceObjectPair}}
+	syntaxItems := []SubItem{&AbstractSyntaxSubItem{Name: string(p.ServiceObjectPair)}}
 	for _, syntaxUID := range p.TransferSyntaxes {
-		syntaxItems = append(syntaxItems, &TransferSyntaxSubItem{Name: syntaxUID})
+		syntaxItems = append(syntaxItems, &TransferSyntaxSubItem{Name: string(syntaxUID)})
 	}
 	return &PresentationContextItem{
 		Type:      ItemTypePresentationContextRequest,

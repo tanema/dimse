@@ -25,10 +25,22 @@ func main() {
 
 	q, err := client.Query(
 		query.Patient,
-		[]*dicom.Element{newElem(tag.PatientID, []string{"3af4bf39-601f-4917-a577-9bbbc8b99366"})},
+		[]*dicom.Element{
+			newElem(tag.PatientID, []string{"3af4bf39-601f-4917-a577-9bbbc8b99366"}),
+		},
 	)
 	checkErr("query", err)
-	checkErr("find", q.Find())
+	data, err := q.Find()
+	checkErr("find", err)
+
+	log.Printf("Got find response, found %v docs\n", len(data))
+	for _, doc := range data {
+		for _, e := range doc.Elements {
+			info, _ := tag.Find(e.Tag)
+			log.Println("-> %v = %v", info.Name, e.Value)
+		}
+	}
+
 	client.Close()
 }
 
@@ -38,4 +50,12 @@ func newElem(t tag.Tag, val any) *dicom.Element {
 		log.Fatalf("Err while creating element %v %v %T: %v", t, val, val, err)
 	}
 	return elem
+}
+
+func mustGet(doc dicom.Dataset, t tag.Tag) any {
+	elem, _ := doc.FindElementByTag(t)
+	if elem == nil {
+		return nil
+	}
+	return elem.Value
 }

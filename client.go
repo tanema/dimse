@@ -49,7 +49,7 @@ func (c *Client) connect() error {
 		return err
 	}
 	c.conn = conn
-	go c.listen()
+	go c.listen(conn)
 	return nil
 }
 
@@ -63,16 +63,16 @@ func (c *Client) nextMsgID() int32 {
 	return atomic.AddInt32(&c.msgID, 1)
 }
 
-func (c *Client) listen() {
+func (c *Client) listen(conn net.Conn) {
 	for {
-		data := make([]byte, 4096)
-		n, err := c.conn.Read(data)
+		data := make([]byte, pdu.DefaultMaxPDUSize)
+		n, err := conn.Read(data)
 		if err != nil {
 			return
 		}
 		if n > 0 {
 			pdu, err := pdu.ReadPDU(bytes.NewBuffer(data[:n]))
-			fmt.Printf("recv: %s\n", pdu)
+			// fmt.Printf("recv: %vb %s\n", n, pdu)
 			c.events <- readResult{evt: pdu, err: err}
 		}
 	}
@@ -83,7 +83,7 @@ func (c *Client) sendPDU(msg pdu.PDU) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("send: %s\n", msg)
+	// fmt.Printf("send: %vb %s\n", len(data), msg)
 	return c.send(data)
 }
 
@@ -100,26 +100,30 @@ func (c *Client) Close() error {
 	return nil
 }
 
-func (c *Client) Dispatch(cmd *Command, payload []byte) (*Command, error) {
+func (c *Client) dispatch(cmd *Command, payload []byte) (*Command, []dicom.Dataset, error) {
 	if cmd.CommandDataSetType != commands.Null && len(payload) == 0 {
-		return nil, fmt.Errorf("empty payload provided to a command that requires a payload")
+		return nil, nil, fmt.Errorf("empty payload provided to a command that requires a payload")
 	} else if err := c.connect(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer c.disconnect()
 	ctxMan, err := c.associate(collectSOPs(cmd), nil)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	resp, err := c.pdata(ctxMan, cmd, payload)
+	respCmd, data, err := c.pdata(ctxMan, cmd, payload)
 	if err != nil {
 		c.abort()
-		return nil, err
+		return nil, nil, err
+	} else if err := c.realease(); err != nil {
+		return nil, nil, err
+	} else if cmd.MessageID != respCmd.MessageID {
+		return nil, nil, fmt.Errorf("received %v message id but sent %v", cmd.MessageID, respCmd.MessageID)
 	}
-	return resp, c.realease()
+	return respCmd, data, nil
 }
 
-func (c *Client) associate(sopsClasses []string, transfersyntaxes []string) (*pdu.ContextManager, error) {
+func (c *Client) associate(sopsClasses []serviceobjectpair.UID, transfersyntaxes []transfersyntax.UID) (*pdu.ContextManager, error) {
 	if len(transfersyntaxes) == 0 {
 		transfersyntaxes = transfersyntax.StandardSyntaxes
 	}
@@ -136,7 +140,8 @@ func (c *Client) associate(sopsClasses []string, transfersyntaxes []string) (*pd
 	case *pdu.AAssociate:
 		for _, item := range pt.Items {
 			if pcu, ok := item.(*pdu.PresentationContextItem); ok && pcu.Result == pdu.PresentationContextAccepted {
-				ctxManager.Accept(pcu.ContextID)
+				ts := pcu.Items[0].(*pdu.TransferSyntaxSubItem)
+				ctxManager.Accept(pcu.ContextID, transfersyntax.UID(ts.Name))
 			}
 		}
 		return ctxManager, nil
@@ -167,11 +172,13 @@ func (c *Client) abort() {
 	c.sendPDU(pdu.CreateAbort())
 }
 
-func (c *Client) pdata(ctxMan *pdu.ContextManager, cmd *Command, payload []byte) (*Command, error) {
+func (c *Client) pdata(ctxMan *pdu.ContextManager, cmd *Command, payload []byte) (*Command, []dicom.Dataset, error) {
 	var ctxID uint8
+	//var ts transfersyntax.UID
 	for _, classUID := range cmd.AffectedSOPClassUID {
 		if pctx, err := ctxMan.GetWithSOP(classUID); err == nil {
 			ctxID = pctx.ContextID
+			//ts = pctx.AcceptedTransferSyntax
 			break
 		}
 	}
@@ -180,12 +187,12 @@ func (c *Client) pdata(ctxMan *pdu.ContextManager, cmd *Command, payload []byte)
 	// and feed it into the associate call. The only time this could happen is if
 	// the server rejected a specific presentation context.
 	if ctxID == 0 {
-		return nil, fmt.Errorf("Could not find an associated presentation context item for command which means the server rejected the AffectedSOPClassUID you requested.")
+		return nil, nil, fmt.Errorf("Could not find an associated presentation context item for command which means the server rejected the AffectedSOPClassUID you requested.")
 	}
 
-	value, err := EncodeCmd(cmd)
+	value, err := EncodeCmd(cmd, transfersyntax.ImplicitVRLittleEndian)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// encode the command first and then send data along
 	pdatas := pdu.CreatePdata(ctxID, true, value)
@@ -194,67 +201,47 @@ func (c *Client) pdata(ctxMan *pdu.ContextManager, cmd *Command, payload []byte)
 	}
 	for _, pd := range pdatas {
 		if err := c.sendPDU(pd); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
-	resp, err := c.readPDataCmd()
-	if err != nil {
-		return nil, err
-	}
-	if resp.CommandDataSetType != commands.Null {
-		_, err := c.readPDataChunks()
-		if err != nil {
-			return nil, err
-		}
-	}
-	return resp, nil
+	return c.readPData()
 }
 
-func (c *Client) readPDataCmd() (*Command, error) {
-	evt := <-c.events
-	if evt.err != nil {
-		return nil, evt.err
-	}
-	switch tevt := evt.evt.(type) {
-	case *pdu.PDataTf:
-		if len(tevt.Items) != 1 {
-			return nil, fmt.Errorf("unexpected length of items in pdata command message")
-		}
-		item := tevt.Items[0]
-		if !item.Command || !item.Last {
-			return nil, fmt.Errorf("unexpected command formatting")
-		}
-		return DecodeCmd(item.Value)
-	case *pdu.AAbort:
-		return nil, fmt.Errorf("aborted pdata. Reason: %s Source: %s", tevt.Reason, tevt.Source)
-	default:
-		return nil, fmt.Errorf("unexpected message %T after sending release", evt.evt)
-	}
-}
-
-func (c *Client) readPDataChunks() ([]byte, error) {
-	data := []byte{}
+func (c *Client) readPData() (*Command, []dicom.Dataset, error) {
+	var cmd *Command
+	var err error
+	sets := []dicom.Dataset{}
 	for {
 		evt := <-c.events
 		if evt.err != nil {
-			return nil, evt.err
+			return nil, nil, evt.err
 		}
 		switch tevt := evt.evt.(type) {
 		case *pdu.PDataTf:
 			for _, item := range tevt.Items {
 				if item.Command {
-					return nil, fmt.Errorf("unexpected command in data chunks")
-				}
-				data = append(data, item.Value...)
-				if item.Last {
-					return data, nil
+					cmd, err = DecodeCmd(item.Value, transfersyntax.ImplicitVRLittleEndian)
+					if err != nil {
+						return nil, nil, err
+					} else if cmd.CommandDataSetType == commands.Null {
+						return cmd, nil, nil
+					}
+				} else {
+					payload, err := decode(item.Value, false)
+					if err != nil {
+						return nil, nil, err
+					}
+					sets = append(sets, payload)
+					if item.Last {
+						return cmd, sets, nil
+					}
 				}
 			}
 		case *pdu.AAbort:
-			return nil, fmt.Errorf("aborted pdata. Reason: %s Source: %s", tevt.Reason, tevt.Source)
+			return nil, nil, fmt.Errorf("aborted pdata. Reason: %s Source: %s", tevt.Reason, tevt.Source)
 		default:
-			return nil, fmt.Errorf("unexpected message %T after sending release", evt.evt)
+			return nil, nil, fmt.Errorf("unexpected message %T after sending release", evt.evt)
 		}
 	}
 }
@@ -263,7 +250,7 @@ func (c *Client) readPDataChunks() ([]byte, error) {
 // No error will be returned if the error command returned successfully.
 func (c *Client) Echo() error {
 	msgID := int(c.nextMsgID())
-	resp, err := c.Dispatch(&Command{
+	resp, _, err := c.dispatch(&Command{
 		CommandField:        commands.CECHORQ,
 		MessageID:           msgID,
 		AffectedSOPClassUID: serviceobjectpair.VerificationClasses,
@@ -271,11 +258,8 @@ func (c *Client) Echo() error {
 	}, nil)
 	if err != nil {
 		return err
-	}
-	if resp.CommandField != commands.CECHORSP {
+	} else if resp.CommandField != commands.CECHORSP {
 		return fmt.Errorf("received %s in response to echo", resp.CommandField)
-	} else if resp.MessageID != msgID {
-		return fmt.Errorf("received %v message id but sent %v", resp.MessageID, msgID)
 	}
 	return nil
 }
@@ -297,45 +281,61 @@ func (q *Query) SetPriority(p int) *Query {
 	return q
 }
 
-func (q *Query) Find() error {
-	_, err := q.client.Dispatch(&Command{
+func (q *Query) Find() ([]dicom.Dataset, error) {
+	msgID := int(q.client.nextMsgID())
+	resp, data, err := q.client.dispatch(&Command{
 		CommandField:        commands.CFINDRQ,
-		MessageID:           int(q.client.nextMsgID()),
-		AffectedSOPClassUID: []string{q.sopForCmd(commands.CFINDRQ)},
+		MessageID:           msgID,
+		AffectedSOPClassUID: []serviceobjectpair.UID{q.sopForCmd(commands.CFINDRQ)},
 		CommandDataSetType:  commands.NonNull,
 		Priority:            q.Priority,
 	}, q.payload)
-	return err
+	if err != nil {
+		return nil, err
+	} else if resp.CommandField != commands.CFINDRSP {
+		return nil, fmt.Errorf("received %s in response to find", resp.CommandField)
+	}
+	return data, nil
 }
 
-func (q *Query) Get() error {
-	_, err := q.client.Dispatch(&Command{
+func (q *Query) Get() ([]dicom.Dataset, error) {
+	resp, data, err := q.client.dispatch(&Command{
 		CommandField:        commands.CGETRQ,
 		MessageID:           int(q.client.nextMsgID()),
-		AffectedSOPClassUID: []string{q.sopForCmd(commands.CGETRQ)},
+		AffectedSOPClassUID: []serviceobjectpair.UID{q.sopForCmd(commands.CGETRQ)},
 		CommandDataSetType:  commands.NonNull,
 		Priority:            q.Priority,
 	}, q.payload)
-	return err
+	if err != nil {
+		return nil, err
+	} else if resp.CommandField != commands.CGETRSP {
+		return nil, fmt.Errorf("received %s in response to find", resp.CommandField)
+	}
+	return data, nil
 }
 
-func (q *Query) Move(dst string) error {
-	_, err := q.client.Dispatch(&Command{
+func (q *Query) Move(dst string) ([]dicom.Dataset, error) {
+	resp, data, err := q.client.dispatch(&Command{
 		CommandField:        commands.CMOVERQ,
 		MessageID:           int(q.client.nextMsgID()),
-		AffectedSOPClassUID: []string{q.sopForCmd(commands.CMOVERQ)},
+		AffectedSOPClassUID: []serviceobjectpair.UID{q.sopForCmd(commands.CMOVERQ)},
 		Priority:            q.Priority,
 		MoveDestination:     dst,
 		CommandDataSetType:  commands.NonNull,
 	}, q.payload)
-	return err
+	if err != nil {
+		return nil, err
+	} else if resp.CommandField != commands.CMOVERSP {
+		return nil, fmt.Errorf("received %s in response to find", resp.CommandField)
+	}
+	return data, nil
 }
 
-func (q *Query) Store(inst []string, id int, dst, title string) error {
-	_, err := q.client.Dispatch(&Command{
+func (q *Query) Store(inst []serviceobjectpair.UID, id int, dst, title string) ([]dicom.Dataset, error) {
+	resp, data, err := q.client.dispatch(&Command{
 		CommandField:                         commands.CSTORERQ,
 		MessageID:                            int(q.client.nextMsgID()),
-		AffectedSOPClassUID:                  []string{q.sopForCmd(commands.CMOVERQ)},
+		AffectedSOPClassUID:                  []serviceobjectpair.UID{q.sopForCmd(commands.CMOVERQ)},
 		CommandDataSetType:                   commands.NonNull,
 		Priority:                             q.Priority,
 		MoveDestination:                      dst,
@@ -343,13 +343,18 @@ func (q *Query) Store(inst []string, id int, dst, title string) error {
 		MoveOriginatorApplicationEntityTitle: title,
 		MoveOriginatorMessageID:              id,
 	}, q.payload)
-	return err
+	if err != nil {
+		return nil, err
+	} else if resp.CommandField != commands.CMOVERSP {
+		return nil, fmt.Errorf("received %s in response to find", resp.CommandField)
+	}
+	return data, nil
 }
 
 // collectSOPs will collect SOPs from all commands to be put into the association
 // request, and ensure that they are unique.
-func collectSOPs(cmds ...*Command) []string {
-	sops := []string{}
+func collectSOPs(cmds ...*Command) []serviceobjectpair.UID {
+	sops := []serviceobjectpair.UID{}
 	for _, cmd := range cmds {
 		sops = append(sops, cmd.AffectedSOPClassUID...)
 	}
@@ -357,7 +362,7 @@ func collectSOPs(cmds ...*Command) []string {
 	return slices.Compact(sops)
 }
 
-func (q *Query) sopForCmd(kind commands.Kind) string {
+func (q *Query) sopForCmd(kind commands.Kind) serviceobjectpair.UID {
 	switch q.Level {
 	case query.Patient:
 		switch kind {
