@@ -74,6 +74,8 @@ type (
 const (
 	// The app context for DICOM. The first item in the A-ASSOCIATE-RQ
 	DICOMApplicationContextItemName        = "1.2.840.10008.3.1.1.1"
+	ImplementationClassUID                 = "1.2.826.0.1.3680043.9.7133"
+	ImplementationName                     = "GODICOM_1_1"
 	CurrentProtocolVersion          uint16 = 1
 	DefaultMaxPDUSize               uint32 = 4 << 20
 )

@@ -20,10 +20,8 @@ func checkErr(scope string, err error) {
 func main() {
 	ctx := context.Background()
 	client, err := dimse.NewClient("www.dicomserver.co.uk:104", nil)
-	if err != nil {
-		log.Fatalf("connection err: %v", err)
-	}
-	checkErr("echo", client.Echo(ctx))
+	checkErr("connection", err)
+	checkErr("echo", echo(ctx, client))
 
 	q, err := client.Query(
 		query.Patient,
@@ -32,9 +30,19 @@ func main() {
 		},
 	)
 	checkErr("query", err)
-	data, err := q.Find(ctx)
-	checkErr("find", err)
+	checkErr("find", find(ctx, q))
+	checkErr("get", get(ctx, q))
+}
 
+func echo(ctx context.Context, client *dimse.Client) error {
+	return client.Echo(ctx)
+}
+
+func find(ctx context.Context, q *dimse.Query) error {
+	data, err := q.Find(ctx)
+	if err != nil {
+		return err
+	}
 	log.Printf("Got find response, found %v docs\n", len(data))
 	for i, doc := range data {
 		log.Printf("-> doc %v\n", i)
@@ -43,6 +51,23 @@ func main() {
 			log.Printf("\t-> %v = %v\n", info.Name, e.Value)
 		}
 	}
+	return nil
+}
+
+func get(ctx context.Context, q *dimse.Query) error {
+	data, err := q.Get(ctx)
+	if err != nil {
+		return err
+	}
+	log.Printf("Got find response, found %v docs\n", len(data))
+	for i, doc := range data {
+		log.Printf("-> doc %v\n", i)
+		for _, e := range doc.Elements {
+			info, _ := tag.Find(e.Tag)
+			log.Printf("\t-> %v = %v\n", info.Name, e.Value)
+		}
+	}
+	return nil
 }
 
 func newElem(t tag.Tag, val any) *dicom.Element {

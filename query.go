@@ -24,15 +24,18 @@ type Query struct {
 }
 
 func (c *Client) Query(level query.Level, q []*dicom.Element) (*Query, error) {
-	if len(q) == 0 {
-		return nil, fmt.Errorf("Query: empty query")
-	}
 	query := &Query{
 		client: c,
 		Level:  level,
 		Filter: q,
 	}
-	return query, fmt.Errorf("Query: unable to encode query payload %v", query.encodePayload())
+
+	if len(q) == 0 {
+		return nil, fmt.Errorf("Query: empty query")
+	} else if err := query.encodePayload(); err != nil {
+		return nil, fmt.Errorf("Query: unable to encode query payload %v", err)
+	}
+	return query, nil
 }
 
 func (q *Query) SetPriority(p int) *Query {

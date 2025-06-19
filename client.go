@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sync/atomic"
-	"time"
 
 	"github.com/suyashkumar/dicom"
 	"github.com/tanema/dimse/src/commands"
@@ -19,14 +18,12 @@ type (
 		pool  *conn.Pool
 	}
 	ClientConfig struct {
-		MaxConnections    int
-		ConnectionTimeout time.Duration
+		Conn conn.Config
 	}
 )
 
 var DefaultConfig = &ClientConfig{
-	MaxConnections:    10,
-	ConnectionTimeout: time.Second,
+	Conn: *conn.DefaultConfig,
 }
 
 func NewClient(addr string, cfg *ClientConfig) (*Client, error) {
@@ -38,7 +35,7 @@ func NewClient(addr string, cfg *ClientConfig) (*Client, error) {
 	}
 	return &Client{
 		cfg:  *cfg,
-		pool: conn.NewPool(addr, cfg.MaxConnections, cfg.ConnectionTimeout),
+		pool: conn.NewPool(addr, cfg.Conn),
 	}, nil
 }
 

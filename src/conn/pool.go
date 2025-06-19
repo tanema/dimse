@@ -10,16 +10,18 @@ import (
 // is released.
 type Pool struct {
 	addr     string
+	cfg      Config
 	timeout  time.Duration
 	resource chan int
 }
 
-func NewPool(addr string, limit int, timeout time.Duration) *Pool {
+func NewPool(addr string, cfg Config) *Pool {
 	p := &Pool{
 		addr:     addr,
-		resource: make(chan int, limit),
+		cfg:      cfg,
+		resource: make(chan int, cfg.MaxConnections),
 	}
-	for range limit {
+	for range cfg.MaxConnections {
 		p.resource <- 1
 	}
 	return p
@@ -27,7 +29,7 @@ func NewPool(addr string, limit int, timeout time.Duration) *Pool {
 
 func (p *Pool) Aquire(ctx context.Context) (*Conn, error) {
 	<-p.resource
-	return Connect(ctx, p.addr, p.timeout)
+	return Connect(ctx, p.addr, p.cfg)
 }
 
 func (p *Pool) Release(con *Conn) error {

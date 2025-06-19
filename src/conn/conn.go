@@ -20,6 +20,13 @@ type (
 		ctx    context.Context
 		conn   net.Conn
 		events chan readResult
+		cfg    Config
+	}
+	Config struct {
+		MaxConnections    int
+		ConnectionTimeout time.Duration
+		ChunkSize         uint32
+		AETitle           string
 	}
 	readResult struct {
 		evt pdu.PDU
@@ -27,14 +34,21 @@ type (
 	}
 )
 
+var DefaultConfig = &Config{
+	MaxConnections:    10,
+	ConnectionTimeout: time.Second,
+	ChunkSize:         pdu.DefaultMaxPDUSize,
+	AETitle:           "anon-ae",
+}
+
 func Check(addr string) error {
 	testconn, err := net.Dial("tcp", addr)
 	defer testconn.Close()
 	return err
 }
 
-func Connect(ctx context.Context, addr string, timeout time.Duration) (*Conn, error) {
-	conn, err := net.DialTimeout("tcp", addr, timeout)
+func Connect(ctx context.Context, addr string, cfg Config) (*Conn, error) {
+	conn, err := net.DialTimeout("tcp", addr, cfg.ConnectionTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -42,6 +56,7 @@ func Connect(ctx context.Context, addr string, timeout time.Duration) (*Conn, er
 		ctx:    ctx,
 		conn:   conn,
 		events: make(chan readResult),
+		cfg:    cfg,
 	}
 	go c.listen()
 	return c, nil
@@ -56,7 +71,6 @@ func (c *Conn) listen() {
 		}
 		if n > 0 {
 			pdu, err := pdu.ReadPDU(bytes.NewBuffer(data[:n]))
-			// fmt.Printf("recv: %vb %s\n", n, pdu)
 			c.events <- readResult{evt: pdu, err: err}
 		}
 	}
@@ -76,7 +90,6 @@ func (c *Conn) Send(msg pdu.PDU) error {
 	if err != nil {
 		return err
 	}
-	// fmt.Printf("send: %vb %s\n", len(data), msg)
 	_, err = c.conn.Write(data)
 	return err
 }
@@ -91,7 +104,7 @@ func (c *Conn) Associate(sopsClasses []serviceobjectpair.UID, transfersyntaxes [
 		transfersyntaxes = transfersyntax.StandardSyntaxes
 	}
 
-	assocPDI, ctxManager := pdu.CreateAssoc(sopsClasses, transfersyntaxes)
+	assocPDI, ctxManager := pdu.CreateAssoc(c.cfg.AETitle, c.cfg.ChunkSize, sopsClasses, transfersyntaxes)
 	if err := c.Send(assocPDI); err != nil {
 		return nil, err
 	}
