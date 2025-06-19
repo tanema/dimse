@@ -59,46 +59,36 @@ func (r *Reader) skip(l int) error {
 }
 
 func (r *Reader) readElement(implicit bool) (*dicom.Element, error) {
-	elemTag, err := r.readTag()
-	if err != nil {
+	if t, err := r.readTag(); err != nil {
 		return nil, err
-	}
-
-	vr, err := r.readVR(implicit, *elemTag)
-	if err != nil {
+	} else if vr, err := r.readRepresentation(implicit, t); err != nil {
 		return nil, err
+	} else if vlength, err := r.readLength(implicit, vr); err != nil {
+		return nil, fmt.Errorf("readElement: error when reading VL for element %v: %w", t, err)
+	} else if val, err := r.readValue(t, vr, vlength); err != nil {
+		return nil, fmt.Errorf("readElement: error when reading Value for element %v: %w", t, err)
+	} else {
+		return &dicom.Element{
+			Tag:                    t,
+			ValueRepresentation:    tag.GetVRKind(t, vr),
+			RawValueRepresentation: vr,
+			ValueLength:            vlength,
+			Value:                  val,
+		}, nil
 	}
-
-	vlength, err := r.readVL(implicit, vr)
-	if err != nil {
-		return nil, fmt.Errorf("readElement: error when reading VL for element %v: %w", elemTag, err)
-	}
-
-	val, err := r.readValue(*elemTag, vr, vlength)
-	if err != nil {
-		return nil, fmt.Errorf("readElement: error when reading Value for element %v: %w", elemTag, err)
-	}
-
-	return &dicom.Element{
-		Tag:                    *elemTag,
-		ValueRepresentation:    tag.GetVRKind(*elemTag, vr),
-		RawValueRepresentation: vr,
-		ValueLength:            vlength,
-		Value:                  val,
-	}, nil
 }
 
-func (r *Reader) readTag() (*tag.Tag, error) {
+func (r *Reader) readTag() (tag.Tag, error) {
 	var group, element uint16
 	if err := r.read(&group); err != nil {
-		return nil, err
+		return tag.Tag{}, err
 	} else if err := r.read(&element); err != nil {
-		return nil, err
+		return tag.Tag{}, err
 	}
-	return &tag.Tag{Group: group, Element: element}, nil
+	return tag.Tag{Group: group, Element: element}, nil
 }
 
-func (r *Reader) readVR(implicit bool, t tag.Tag) (string, error) {
+func (r *Reader) readRepresentation(implicit bool, t tag.Tag) (string, error) {
 	if implicit {
 		if entry, err := tag.Find(t); err == nil {
 			switch entry.Tag {
@@ -110,18 +100,14 @@ func (r *Reader) readVR(implicit bool, t tag.Tag) (string, error) {
 		}
 		return tag.UnknownVR, nil
 	}
-	// Explicit Transfer Syntax, read 2 byte VR:
 	return r.readRawString(2)
 }
 
-func (r *Reader) readVL(implicit bool, vr string) (uint32, error) {
+func (r *Reader) readLength(implicit bool, vr string) (uint32, error) {
 	if implicit {
 		var vl uint32
 		return vl, r.read(&vl)
 	}
-
-	// Explicit Transfer Syntax
-	// More details here: https://dicom.nema.org/medical/dicom/current/output/html/part05.html#sect_7.1.2
 	switch vr {
 	case "NA", vrraw.OtherByte, vrraw.OtherDouble, vrraw.OtherFloat,
 		vrraw.OtherLong, vrraw.OtherWord, vrraw.Sequence, vrraw.Unknown,
@@ -129,47 +115,32 @@ func (r *Reader) readVL(implicit bool, vr string) (uint32, error) {
 		vrraw.UnlimitedText:
 		r.skip(2) // ignore two reserved bytes (0000H)
 		var vl uint32
-		err := r.read(&vl)
-		if err != nil {
+		if err := r.read(&vl); err != nil {
 			return 0, err
-		}
-
-		if vl == tag.VLUndefinedLength &&
-			(vr == vrraw.UnlimitedCharacters ||
-				vr == vrraw.UniversalResourceIdentifier ||
-				vr == vrraw.UnlimitedText) {
+		} else if vl == tag.VLUndefinedLength && (vr == vrraw.UnlimitedCharacters || vr == vrraw.UniversalResourceIdentifier || vr == vrraw.UnlimitedText) {
 			return 0, errors.New("UC, UR and UT may not have an Undefined Length, i.e.,a Value Length of FFFFFFFFH")
 		}
 		return vl, nil
 	default:
 		var vl16 uint16
-		err := r.read(&vl16)
-		if err != nil {
+		if err := r.read(&vl16); err != nil {
 			return 0, err
 		}
 		return uint32(vl16), nil
 	}
 }
 
+// limited value read support because the protocol data contains very few data types.
 func (r *Reader) readValue(t tag.Tag, vr string, vl uint32) (dicom.Value, error) {
 	vrkind := tag.GetVRKind(t, vr)
 	switch vrkind {
-	case tag.VRBytes:
-		return nil, fmt.Errorf("cannot read bytes value in command")
-		// return r.readBytes(t, vr, vl)
+	case tag.VRBytes, tag.VRFloat32List, tag.VRFloat64List, tag.VRSequence, tag.VRItem,
+		tag.VRUnknown, tag.VRPixelData:
+		return nil, fmt.Errorf("cannot read %v value", vr)
 	case tag.VRUInt16List, tag.VRUInt32List, tag.VRInt16List, tag.VRInt32List, tag.VRTagList:
 		return r.readInt(t, vr, vl)
-	case tag.VRFloat32List, tag.VRFloat64List:
-		// return r.readFloat(t, vr, vl)
-		return nil, fmt.Errorf("cannot read float value in command")
-	case tag.VRSequence, tag.VRItem:
-		return nil, fmt.Errorf("cannot read sequence value in command")
-	case tag.VRUnknown, tag.VRPixelData:
-		// if vl == tag.VLUndefinedLength { return r.readSequence(t, vr, vl) }
-		// return r.readBytes(t, vr, vl)
-		return nil, fmt.Errorf("cannot read pixel value in command")
 	default:
-		return r.readString(t, vl)
+		return r.readString(vl)
 	}
 }
 
@@ -179,15 +150,10 @@ func (r *Reader) readRawString(l uint32) (string, error) {
 	return string(data), err
 }
 
-func (r *Reader) readString(t tag.Tag, vl uint32) (dicom.Value, error) {
+func (r *Reader) readString(vl uint32) (dicom.Value, error) {
 	str, err := r.readRawString(vl)
 	if err != nil {
 		return nil, fmt.Errorf("error reading string element value: %w", err)
-	}
-
-	info, _ := tag.Find(t)
-	if err != nil {
-		return nil, fmt.Errorf("error reading string element %v value: %w", info.Name, err)
 	}
 	onlySpaces := true
 	for _, char := range str {

@@ -1,4 +1,4 @@
-package dimse
+package commands
 
 import (
 	"bytes"
@@ -9,29 +9,19 @@ import (
 	"github.com/suyashkumar/dicom/pkg/tag"
 
 	"github.com/tanema/dimse/src/chunkreader"
-	"github.com/tanema/dimse/src/commands"
-	"github.com/tanema/dimse/src/query"
 	"github.com/tanema/dimse/src/serviceobjectpair"
 	"github.com/tanema/dimse/src/tags"
 	"github.com/tanema/dimse/src/transfersyntax"
 )
 
 type (
-	// Query is a captured, validated query scope for find, get, move, and store
-	Query struct {
-		client   *Client
-		payload  []byte
-		Level    query.Level
-		Filter   []*dicom.Element
-		Priority int // CStore CMove CGet CFind
-	}
 	// Command captures both a request and response of a PDU command
 	Command struct {
 		Dataset             dicom.Dataset
-		CommandField        commands.Kind
+		CommandField        Kind
 		AffectedSOPClassUID []serviceobjectpair.UID
 		MessageID           int
-		CommandDataSetType  commands.DataSetType
+		CommandDataSetType  DataSetType
 		Status              int
 		ErrorComment        string
 		Priority            int    // CStore CMove CGet CFind
@@ -48,7 +38,7 @@ type (
 	}
 )
 
-func EncodeCmd(cmd *Command, ts transfersyntax.UID) ([]byte, error) {
+func Encode(cmd *Command, ts transfersyntax.UID) ([]byte, error) {
 	buf := bytes.NewBuffer([]byte{})
 	w, err := dicom.NewWriter(buf)
 	if err != nil {
@@ -76,19 +66,19 @@ func (c *Command) encode(w *dicom.Writer) error {
 		return err
 	}
 
-	if c.CommandField == commands.CSTORERQ || c.CommandField == commands.CMOVERQ || c.CommandField == commands.CGETRQ || c.CommandField == commands.CFINDRQ {
+	if c.CommandField == CSTORERQ || c.CommandField == CMOVERQ || c.CommandField == CGETRQ || c.CommandField == CFINDRQ {
 		if err := writeElement(w, tags.Priority, []int{c.Priority}); err != nil {
 			return err
 		}
 	}
 
-	if c.CommandField == commands.CMOVERQ {
+	if c.CommandField == CMOVERQ {
 		if err := writeElement(w, tags.MoveDestination, []string{c.MoveDestination}); err != nil {
 			return err
 		}
 	}
 
-	if c.CommandField == commands.CSTORERQ {
+	if c.CommandField == CSTORERQ {
 		sops := []string{}
 		for _, s := range c.AffectedSOPInstanceUID {
 			sops = append(sops, string(s))
@@ -111,11 +101,13 @@ func (c *Command) encode(w *dicom.Writer) error {
 	return nil
 }
 
-func DecodeCmd(data []byte, ts transfersyntax.UID) (*Command, error) {
-	d, err := decode(data, true)
-	if err != nil {
+func Decode(data []byte, ts transfersyntax.UID) (*Command, error) {
+	r := chunkreader.New()
+	if err := r.Decode(data, true); err != nil {
 		return nil, err
 	}
+	d := r.Dataset()
+
 	cmd := &Command{Dataset: d}
 	var cdst, kind int
 	var asopcuid []string
@@ -133,14 +125,14 @@ func DecodeCmd(data []byte, ts transfersyntax.UID) (*Command, error) {
 		return nil, fmt.Errorf("issues reading ErrorComment %v", err)
 	}
 
-	cmd.CommandField = commands.Kind(kind)
+	cmd.CommandField = Kind(kind)
 	cmd.AffectedSOPClassUID = make([]serviceobjectpair.UID, len(asopcuid))
 	for i, sop := range asopcuid {
 		cmd.AffectedSOPClassUID[i] = serviceobjectpair.UID(sop)
 	}
-	cmd.CommandDataSetType = commands.DataSetType(cdst)
+	cmd.CommandDataSetType = DataSetType(cdst)
 
-	if cmd.CommandField == commands.CSTORERQ || cmd.CommandField == commands.CMOVERQ || cmd.CommandField == commands.CGETRQ || cmd.CommandField == commands.CFINDRQ {
+	if cmd.CommandField == CSTORERQ || cmd.CommandField == CMOVERQ || cmd.CommandField == CGETRQ || cmd.CommandField == CFINDRQ {
 		if err := readElementVal(d, tags.Priority, &cmd.Priority, true); err != nil {
 			return nil, err
 		}
@@ -157,21 +149,13 @@ func DecodeCmd(data []byte, ts transfersyntax.UID) (*Command, error) {
 		return nil, err
 	}
 
-	if cmd.CommandField == commands.CSTORERQ {
+	if cmd.CommandField == CSTORERQ {
 		if err := readElementVals(d, tags.AffectedSOPInstanceUID, &cmd.AffectedSOPInstanceUID, true); err != nil {
 			return nil, err
 		}
 	}
 
 	return cmd, nil
-}
-
-func decode(data []byte, implicit bool) (dicom.Dataset, error) {
-	r := chunkreader.New()
-	if err := r.Decode(data, implicit); err != nil {
-		return dicom.Dataset{}, err
-	}
-	return r.Dataset(), nil
 }
 
 func writeElement(w *dicom.Writer, t tag.Tag, val any) error {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 
 	"github.com/suyashkumar/dicom"
@@ -17,11 +18,12 @@ func checkErr(scope string, err error) {
 }
 
 func main() {
-	client, err := dimse.NewClient("www.dicomserver.co.uk:104")
+	ctx := context.Background()
+	client, err := dimse.NewClient("www.dicomserver.co.uk:104", nil)
 	if err != nil {
 		log.Fatalf("connection err: %v", err)
 	}
-	checkErr("echo", client.Echo())
+	checkErr("echo", client.Echo(ctx))
 
 	q, err := client.Query(
 		query.Patient,
@@ -30,7 +32,7 @@ func main() {
 		},
 	)
 	checkErr("query", err)
-	data, err := q.Find()
+	data, err := q.Find(ctx)
 	checkErr("find", err)
 
 	log.Printf("Got find response, found %v docs\n", len(data))
@@ -41,8 +43,6 @@ func main() {
 			log.Printf("\t-> %v = %v\n", info.Name, e.Value)
 		}
 	}
-
-	client.Close()
 }
 
 func newElem(t tag.Tag, val any) *dicom.Element {
