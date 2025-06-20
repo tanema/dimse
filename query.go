@@ -43,7 +43,7 @@ func (q *Query) SetPriority(p int) *Query {
 	return q
 }
 
-func (q *Query) Find(ctx context.Context) ([]dicom.Dataset, error) {
+func (q *Query) Find(ctx context.Context) (*commands.Command, []dicom.Dataset, error) {
 	resp, data, err := q.client.dispatch(ctx, &commands.Command{
 		CommandField:        commands.CFINDRQ,
 		AffectedSOPClassUID: []serviceobjectpair.UID{q.sopForCmd(commands.CFINDRQ)},
@@ -51,11 +51,11 @@ func (q *Query) Find(ctx context.Context) ([]dicom.Dataset, error) {
 		Priority:            q.Priority,
 	}, q.payload)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	} else if resp.CommandField != commands.CFINDRSP {
-		return nil, fmt.Errorf("received %s in response to find", resp.CommandField)
+		return nil, nil, fmt.Errorf("received %s in response to find", resp.CommandField)
 	}
-	return data, nil
+	return resp, data, nil
 }
 
 func (q *Query) Get(ctx context.Context) ([]dicom.Dataset, error) {

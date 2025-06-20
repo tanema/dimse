@@ -1,7 +1,6 @@
-package chunkreader
+package encoding
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -14,48 +13,69 @@ import (
 	"github.com/suyashkumar/dicom/pkg/vrraw"
 )
 
-type Reader struct {
-	buf *bytes.Buffer
-	ds  dicom.Dataset
-	bo  binary.ByteOrder
-}
+type (
+	Reader struct {
+		bo binary.ByteOrder
+		in []io.Reader
+	}
+	Skip int64
+)
 
-func New() *Reader {
+func NewReader(in io.Reader, bo binary.ByteOrder) *Reader {
 	return &Reader{
-		ds:  dicom.Dataset{Elements: []*dicom.Element{}},
-		buf: bytes.NewBuffer(nil),
-		bo:  binary.LittleEndian,
+		bo: bo,
+		in: []io.Reader{in},
 	}
 }
 
-func (r *Reader) Dataset() dicom.Dataset {
-	return r.ds
-}
-
-func (r *Reader) Decode(data []byte, implicit bool) error {
-	if _, err := r.buf.Write(data); err != nil {
-		return err
-	}
+func (r *Reader) Decode(implicit bool) (dicom.Dataset, error) {
+	ds := dicom.Dataset{}
 	for {
 		elem, err := r.readElement(implicit)
 		if elem != nil {
-			r.ds.Elements = append(r.ds.Elements, elem)
+			ds.Elements = append(ds.Elements, elem)
 		}
 		if errors.Is(err, io.EOF) {
-			return nil
+			return ds, nil
 		} else if err != nil {
-			return err
+			return ds, err
 		}
 	}
 }
 
-func (r *Reader) read(val any) error {
-	return binary.Read(r.buf, r.bo, val)
+func (r *Reader) reader() io.Reader {
+	return r.in[len(r.in)-1]
 }
 
-func (r *Reader) skip(l int) error {
-	junk := make([]byte, l)
-	return binary.Read(r.buf, r.bo, &junk)
+func (r *Reader) PushLimit(l int) {
+	r.in = append(r.in, &io.LimitedReader{R: r.reader(), N: int64(l)})
+}
+
+func (r *Reader) PopLimit() {
+	if len(r.in) <= 1 {
+		return
+	}
+	x := len(r.in) - 1
+	r.in = r.in[:x:x]
+}
+
+func (r *Reader) Read(parts ...any) error {
+	for _, data := range parts {
+		if skip, isSkip := data.(Skip); isSkip {
+			zeros := make([]byte, int(skip))
+			if err := binary.Read(r.reader(), r.bo, zeros); err != nil {
+				return err
+			}
+		} else if err := binary.Read(r.reader(), r.bo, data); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Reader) String(length int) (string, error) {
+	data := make([]byte, length)
+	return string(data), r.Read(&data)
 }
 
 func (r *Reader) readElement(implicit bool) (*dicom.Element, error) {
@@ -80,9 +100,7 @@ func (r *Reader) readElement(implicit bool) (*dicom.Element, error) {
 
 func (r *Reader) readTag() (tag.Tag, error) {
 	var group, element uint16
-	if err := r.read(&group); err != nil {
-		return tag.Tag{}, err
-	} else if err := r.read(&element); err != nil {
+	if err := r.Read(&group, &element); err != nil {
 		return tag.Tag{}, err
 	}
 	return tag.Tag{Group: group, Element: element}, nil
@@ -106,16 +124,15 @@ func (r *Reader) readRepresentation(implicit bool, t tag.Tag) (string, error) {
 func (r *Reader) readLength(implicit bool, vr string) (uint32, error) {
 	if implicit {
 		var vl uint32
-		return vl, r.read(&vl)
+		return vl, r.Read(&vl)
 	}
 	switch vr {
 	case "NA", vrraw.OtherByte, vrraw.OtherDouble, vrraw.OtherFloat,
 		vrraw.OtherLong, vrraw.OtherWord, vrraw.Sequence, vrraw.Unknown,
 		vrraw.UnlimitedCharacters, vrraw.UniversalResourceIdentifier,
 		vrraw.UnlimitedText:
-		r.skip(2) // ignore two reserved bytes (0000H)
 		var vl uint32
-		if err := r.read(&vl); err != nil {
+		if err := r.Read(Skip(2), &vl); err != nil {
 			return 0, err
 		} else if vl == tag.VLUndefinedLength && (vr == vrraw.UnlimitedCharacters || vr == vrraw.UniversalResourceIdentifier || vr == vrraw.UnlimitedText) {
 			return 0, errors.New("UC, UR and UT may not have an Undefined Length, i.e.,a Value Length of FFFFFFFFH")
@@ -123,7 +140,7 @@ func (r *Reader) readLength(implicit bool, vr string) (uint32, error) {
 		return vl, nil
 	default:
 		var vl16 uint16
-		if err := r.read(&vl16); err != nil {
+		if err := r.Read(&vl16); err != nil {
 			return 0, err
 		}
 		return uint32(vl16), nil
@@ -146,7 +163,7 @@ func (r *Reader) readValue(t tag.Tag, vr string, vl uint32) (dicom.Value, error)
 
 func (r *Reader) readRawString(l uint32) (string, error) {
 	data := make([]byte, l)
-	_, err := io.ReadFull(r.buf, data)
+	_, err := io.ReadFull(r.reader(), data)
 	return string(data), err
 }
 
@@ -176,22 +193,22 @@ func (r *Reader) readInt(t tag.Tag, vr string, vl uint32) (dicom.Value, error) {
 		switch vr {
 		case vrraw.UnsignedLong:
 			var val uint32
-			err = r.read(&val)
+			err = r.Read(&val)
 			dataLen -= 4
 			retVal = append(retVal, int(val))
 		case vrraw.SignedLong:
 			var val int32
-			err = r.read(&val)
+			err = r.Read(&val)
 			dataLen -= 4
 			retVal = append(retVal, int(val))
 		case vrraw.UnsignedShort, vrraw.AttributeTag:
 			var val uint16
-			err = r.read(&val)
+			err = r.Read(&val)
 			dataLen -= 2
 			retVal = append(retVal, int(val))
 		case vrraw.SignedShort:
 			var val int16
-			err = r.read(&val)
+			err = r.Read(&val)
 			dataLen -= 2
 			retVal = append(retVal, int(val))
 		default:

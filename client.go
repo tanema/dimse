@@ -26,17 +26,14 @@ var DefaultConfig = &ClientConfig{
 	Conn: *conn.DefaultConfig,
 }
 
-func NewClient(addr string, cfg *ClientConfig) (*Client, error) {
+func NewClient(addr string, cfg *ClientConfig) *Client {
 	if cfg == nil {
 		cfg = DefaultConfig
-	}
-	if err := conn.Check(addr); err != nil {
-		return nil, err
 	}
 	return &Client{
 		cfg:  *cfg,
 		pool: conn.NewPool(addr, cfg.Conn),
-	}, nil
+	}
 }
 
 func (c *Client) dispatch(ctx context.Context, cmd *commands.Command, payload []byte) (*commands.Command, []dicom.Dataset, error) {

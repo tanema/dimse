@@ -2,13 +2,14 @@ package commands
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 
 	"github.com/suyashkumar/dicom"
 	"github.com/suyashkumar/dicom/pkg/tag"
 
-	"github.com/tanema/dimse/src/chunkreader"
+	"github.com/tanema/dimse/src/encoding"
 	"github.com/tanema/dimse/src/serviceobjectpair"
 	"github.com/tanema/dimse/src/tags"
 	"github.com/tanema/dimse/src/transfersyntax"
@@ -22,7 +23,7 @@ type (
 		AffectedSOPClassUID []serviceobjectpair.UID
 		MessageID           int
 		CommandDataSetType  DataSetType
-		Status              int
+		Status              Status
 		ErrorComment        string
 		Priority            int    // CStore CMove CGet CFind
 		MoveDestination     string // CMove
@@ -57,6 +58,8 @@ func (c *Command) encode(w *dicom.Writer) error {
 		sops = append(sops, string(s))
 	}
 	if err := writeElement(w, tags.CommandField, []int{int(c.CommandField)}); err != nil {
+		return err
+	} else if err := writeElement(w, tags.StatusTag, []int{int(Pending)}); err != nil {
 		return err
 	} else if err := writeElement(w, tags.AffectedSOPClassUID, sops); err != nil {
 		return err
@@ -102,14 +105,13 @@ func (c *Command) encode(w *dicom.Writer) error {
 }
 
 func Decode(data []byte, ts transfersyntax.UID) (*Command, error) {
-	r := chunkreader.New()
-	if err := r.Decode(data, true); err != nil {
+	d, err := encoding.NewReader(bytes.NewBuffer(data), binary.LittleEndian).Decode(true)
+	if err != nil {
 		return nil, err
 	}
-	d := r.Dataset()
 
 	cmd := &Command{Dataset: d}
-	var cdst, kind int
+	var cdst, kind, status int
 	var asopcuid []string
 	if err := readElementVal(d, tags.CommandField, &kind, true); err != nil {
 		return nil, fmt.Errorf("issues reading CommandField %v", err)
@@ -119,12 +121,13 @@ func Decode(data []byte, ts transfersyntax.UID) (*Command, error) {
 		return nil, fmt.Errorf("issues reading MessageIDBeingRespondedTo %v", err)
 	} else if err := readElementVal(d, tags.CommandDataSetType, &cdst, true); err != nil {
 		return nil, fmt.Errorf("issues reading CommandDataSetType %v", err)
-	} else if err := readElementVal(d, tags.StatusTag, &cmd.Status, true); err != nil {
+	} else if err := readElementVal(d, tags.StatusTag, &status, true); err != nil {
 		return nil, fmt.Errorf("issues reading StatusTag %v", err)
 	} else if err := readElementVal(d, tags.ErrorComment, &cmd.ErrorComment, false); err != nil {
 		return nil, fmt.Errorf("issues reading ErrorComment %v", err)
 	}
 
+	cmd.Status = Status(status)
 	cmd.CommandField = Kind(kind)
 	cmd.AffectedSOPClassUID = make([]serviceobjectpair.UID, len(asopcuid))
 	for i, sop := range asopcuid {

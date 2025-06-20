@@ -1,20 +1,24 @@
 package pdu
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/tanema/dimse/src/encoding"
 )
 
 type (
 	PDU interface {
 		String() string
-		WritePayload(*pduEncoder) error
+		WritePayload(*encoding.Writer) error
 	}
-	SubItem    interface{ Write(*pduEncoder) error }
+	Reader struct {
+		reader *encoding.Reader
+	}
+	SubItem    interface{ Write(*encoding.Writer) error }
 	AAssociate struct {
 		Type            Type
 		ProtocolVersion uint16
@@ -80,44 +84,43 @@ const (
 	DefaultMaxPDUSize               uint32 = 4 << 20
 )
 
-func (v *UserInformationItem) Write(w *pduEncoder) error {
-	buf := bytes.NewBuffer(nil)
-	enc := newEncoder(buf)
+func (v *UserInformationItem) Write(w *encoding.Writer) error {
+	enc := encoding.NewWriter(binary.BigEndian)
 	for _, s := range v.Items {
 		if err := s.Write(enc); err != nil {
 			return err
 		}
 	}
-	return w.Write(ItemTypeUserInformation, encSkip(1), uint16(buf.Len()), buf.Bytes())
+	return w.Write(ItemTypeUserInformation, encoding.Skip(1), uint16(enc.Len()), enc.Bytes())
 }
 
-func (v *UserInformationMaximumLengthItem) Write(w *pduEncoder) error {
+func (v *UserInformationMaximumLengthItem) Write(w *encoding.Writer) error {
 	return w.Write(
 		ItemTypeUserInformationMaximumLength,
-		encSkip(1),
+		encoding.Skip(1),
 		uint16(4),
 		v.MaximumLengthReceived,
 	)
 }
 
-func (v *ImplementationClassUIDSubItem) Write(e *pduEncoder) error {
+func (v *ImplementationClassUIDSubItem) Write(e *encoding.Writer) error {
 	return encSubItemWithName(e, ItemTypeImplementationClassUID, v.Name)
 }
 
-func (v *AsynchronousOperationsWindowSubItem) Write(w *pduEncoder) error {
+func (v *AsynchronousOperationsWindowSubItem) Write(w *encoding.Writer) error {
 	return w.Write(
 		ItemTypeAsynchronousOperationsWindow,
-		encSkip(1),
+		encoding.Skip(1),
 		uint16(4),
 		v.MaxOpsPerformed,
 		v.MaxOpsInvoked,
 	)
 }
 
-func (v *RoleSelectionSubItem) Write(w *pduEncoder) error {
+func (v *RoleSelectionSubItem) Write(w *encoding.Writer) error {
 	return w.Write(
 		ItemTypeRoleSelection,
-		encSkip(1),
+		encoding.Skip(1),
 		uint16(2+len(v.SOPClassUID)+1*2),
 		uint16(len(v.SOPClassUID)),
 		v.SCURole,
@@ -125,44 +128,43 @@ func (v *RoleSelectionSubItem) Write(w *pduEncoder) error {
 	)
 }
 
-func (item *SubItemUnsupported) Write(w *pduEncoder) error {
+func (item *SubItemUnsupported) Write(w *encoding.Writer) error {
 	return w.Write(
 		item.Type,
-		encSkip(1),
+		encoding.Skip(1),
 		uint16(len(item.Data)),
 		item.Data,
 	)
 }
 
-func encSubItemWithName(w *pduEncoder, itemType ItemType, name string) error {
+func encSubItemWithName(w *encoding.Writer, itemType ItemType, name string) error {
 	return w.Write(
 		itemType,
-		encSkip(1),
+		encoding.Skip(1),
 		uint16(len(name)),
 		[]byte(name),
 	)
 }
 
-func (v *ImplementationVersionNameSubItem) Write(e *pduEncoder) error {
+func (v *ImplementationVersionNameSubItem) Write(e *encoding.Writer) error {
 	return encSubItemWithName(e, ItemTypeImplementationVersionName, v.Name)
 }
 
-func (v *ApplicationContextItem) Write(e *pduEncoder) error {
+func (v *ApplicationContextItem) Write(e *encoding.Writer) error {
 	return encSubItemWithName(e, ItemTypeApplicationContext, v.Name)
 }
-func (v *AbstractSyntaxSubItem) Write(e *pduEncoder) error {
+func (v *AbstractSyntaxSubItem) Write(e *encoding.Writer) error {
 	return encSubItemWithName(e, ItemTypeAbstractSyntax, v.Name)
 }
-func (v *TransferSyntaxSubItem) Write(e *pduEncoder) error {
+func (v *TransferSyntaxSubItem) Write(e *encoding.Writer) error {
 	return encSubItemWithName(e, ItemTypeTransferSyntax, v.Name)
 }
 
-func (v *PresentationContextItem) Write(w *pduEncoder) error {
+func (v *PresentationContextItem) Write(w *encoding.Writer) error {
 	if v.Type != ItemTypePresentationContextRequest && v.Type != ItemTypePresentationContextResponse {
 		panic(*v)
 	}
-	buf := bytes.NewBuffer(nil)
-	enc := newEncoder(buf)
+	enc := encoding.NewWriter(binary.BigEndian)
 	for _, s := range v.Items {
 		if err := s.Write(enc); err != nil {
 			return err
@@ -170,15 +172,15 @@ func (v *PresentationContextItem) Write(w *pduEncoder) error {
 	}
 	return w.Write(
 		v.Type,
-		encSkip(1),
-		uint16(4+buf.Len()),
+		encoding.Skip(1),
+		uint16(4+enc.Len()),
 		v.ContextID,
-		encSkip(3),
-		buf.Bytes(),
+		encoding.Skip(3),
+		enc.Bytes(),
 	)
 }
 
-func (v *PresentationDataValueItem) Write(w *pduEncoder) error {
+func (v *PresentationDataValueItem) Write(w *encoding.Writer) error {
 	var header byte
 	if v.Command {
 		header |= 0b01
@@ -208,47 +210,52 @@ func EncodePDU(pdu PDU) ([]byte, error) {
 	default:
 		panic(fmt.Sprintf("Unknown PDU %v", pdu))
 	}
-	buf := bytes.NewBuffer(nil)
-	if err := pdu.WritePayload(newEncoder(buf)); err != nil {
+	enc := encoding.NewWriter(binary.BigEndian)
+	if err := pdu.WritePayload(enc); err != nil {
 		return nil, err
 	}
 
 	var header [6]byte // First 6 bytes of buf.
 	header[0] = uint8(pduType)
 	header[1] = 0 // Reserved.
-	binary.BigEndian.PutUint32(header[2:6], uint32(buf.Len()))
-	return append(header[:], buf.Bytes()...), nil
+	binary.BigEndian.PutUint32(header[2:6], uint32(enc.Len()))
+	return append(header[:], enc.Bytes()...), nil
+}
+
+func NewReader(in io.Reader) *Reader {
+	return &Reader{
+		reader: encoding.NewReader(in, binary.BigEndian),
+	}
+}
+
+func (r *Reader) Next() (PDU, error) {
+	var pduType Type
+	var length uint32
+	if err := r.reader.Read(&pduType, encoding.Skip(1), &length); err != nil {
+		return nil, fmt.Errorf("ReadPDUs error reading pdu header: %v", err)
+	}
+	return r.pdu(pduType, int(length))
 }
 
 // EncodePDU reads a "pdu" from a stream. maxPDUSize defines the maximum
 // possible PDU size, in bytes, accepted by the caller.
-func ReadPDU(in io.Reader) (PDU, error) {
-	var pduType Type
-	var length uint32
-	d := newDecoder(in)
-
-	if err := d.Read(&pduType, encSkip(1), &length); err != nil {
-		return nil, err
-	}
-
-	d.PushLimit(int(length))
+func (r *Reader) pdu(pduType Type, length int) (PDU, error) {
+	r.reader.PushLimit(int(length))
 	switch pduType {
 	case TypeAAssociateRq, TypeAAssociateAc:
 		assoc := &AAssociate{}
 		assoc.Type = pduType
-		if err := d.Read(&assoc.ProtocolVersion, encSkip(2)); err != nil {
-			return assoc, err
-		} else if assoc.CalledAETitle, err = d.String(16); err != nil {
-			return assoc, err
-		} else if assoc.CallingAETitle, err = d.String(16); err != nil {
-			return assoc, err
-		} else if err := d.Read(encSkip(8 * 4)); err != nil {
-			return assoc, err
-		} else if assoc.CalledAETitle == "" || assoc.CallingAETitle == "" {
-			return assoc, fmt.Errorf("A_ASSOCIATE.{Called,Calling}AETitle must not be empty")
+		if err := r.reader.Read(&assoc.ProtocolVersion, encoding.Skip(2)); err != nil {
+			return assoc, fmt.Errorf("error reading protocol version %v", err)
+		} else if assoc.CalledAETitle, err = r.reader.String(16); err != nil {
+			return assoc, fmt.Errorf("error reading called aetitle %v", err)
+		} else if assoc.CallingAETitle, err = r.reader.String(16); err != nil {
+			return assoc, fmt.Errorf("error reading calling aetitle %v", err)
+		} else if err := r.reader.Read(encoding.Skip(8 * 4)); err != nil {
+			return assoc, fmt.Errorf("error reading reserved data chunk %v", err)
 		}
 		for {
-			item, err := decodeSubItem(d)
+			item, err := r.decodeSubItem()
 			if err != nil {
 				if errors.Is(err, io.EOF) {
 					return assoc, nil
@@ -258,106 +265,106 @@ func ReadPDU(in io.Reader) (PDU, error) {
 			assoc.Items = append(assoc.Items, item)
 		}
 	case TypeAAssociateRj:
-		if err := d.Read(encSkip(1)); err != nil { // reserved
+		if err := r.reader.Read(encoding.Skip(1)); err != nil { // reserved
 			return nil, err
 		}
 		assoc := &AAssociateRj{}
-		return assoc, d.Read(&assoc.Result, &assoc.Source, &assoc.Reason)
+		return assoc, r.reader.Read(&assoc.Result, &assoc.Source, &assoc.Reason)
 	case TypeAAbort:
-		if err := d.Read(encSkip(2)); err != nil {
+		if err := r.reader.Read(encoding.Skip(2)); err != nil {
 			return nil, err
 		}
 		abort := &AAbort{}
-		return abort, d.Read(&abort.Source, &abort.Reason)
+		return abort, r.reader.Read(&abort.Source, &abort.Reason)
 	case TypePDataTf:
 		pdtf := &PDataTf{}
 		for {
 			item := PresentationDataValueItem{}
 			var length uint32
 			var header uint8
-			if err := d.Read(&length, &item.ContextID, &header); err != nil {
+			if err := r.reader.Read(&length, &item.ContextID, &header); err != nil {
 				if errors.Is(err, io.EOF) {
 					return pdtf, nil
 				}
-				return pdtf, err
+				return pdtf, fmt.Errorf("error reading pdata header: %v", err)
 			}
 			item.Command = (header&1 != 0)
 			item.Last = (header&2 != 0)
 			item.Value = make([]byte, int(length-2))
-			if err := d.Read(&item.Value); err != nil {
+			if err := r.reader.Read(&item.Value); err != nil {
 				if errors.Is(err, io.EOF) {
 					return pdtf, nil
 				}
-				return pdtf, err
+				return pdtf, fmt.Errorf("error reading pdata value: %v", err)
 			}
 			pdtf.Items = append(pdtf.Items, item)
 		}
 	case TypeAReleaseRq:
-		return &AReleaseRq{}, d.Read(encSkip(4))
+		return &AReleaseRq{}, r.reader.Read(encoding.Skip(4))
 	case TypeAReleaseRp:
-		return &AReleaseRp{}, d.Read(encSkip(4))
+		return &AReleaseRp{}, r.reader.Read(encoding.Skip(4))
 	default:
 		return nil, fmt.Errorf("ReadPDU: unknown message type %d", pduType)
 	}
 }
 
-func decodeSubItem(d *pduDecoder) (SubItem, error) {
+func (r *Reader) decodeSubItem() (SubItem, error) {
 	var itemType ItemType
 	var length uint16
-	if err := d.Read(&itemType, encSkip(1), &length); err != nil {
+	if err := r.reader.Read(&itemType, encoding.Skip(1), &length); err != nil {
 		return nil, err
 	}
 
 	switch itemType {
 	case ItemTypeApplicationContext:
-		name, err := d.String(int(length))
+		name, err := r.reader.String(int(length))
 		return &ApplicationContextItem{Name: name}, err
 	case ItemTypeAbstractSyntax:
-		name, err := d.String(int(length))
+		name, err := r.reader.String(int(length))
 		return &AbstractSyntaxSubItem{Name: name}, err
 	case ItemTypeTransferSyntax:
-		name, err := d.String(int(length))
+		name, err := r.reader.String(int(length))
 		return &TransferSyntaxSubItem{Name: name}, err
 	case ItemTypeImplementationClassUID:
-		name, err := d.String(int(length))
+		name, err := r.reader.String(int(length))
 		return &ImplementationClassUIDSubItem{Name: name}, err
 	case ItemTypeImplementationVersionName:
-		name, err := d.String(int(length))
+		name, err := r.reader.String(int(length))
 		return &ImplementationVersionNameSubItem{Name: name}, err
 	case ItemTypeUserInformationMaximumLength:
 		if length != 4 {
 			return nil, fmt.Errorf("UserInformationMaximumLengthItem must be 4 bytes, but found %dB", length)
 		}
 		var maxLen uint32
-		return &UserInformationMaximumLengthItem{MaximumLengthReceived: maxLen}, d.Read(&maxLen)
+		return &UserInformationMaximumLengthItem{MaximumLengthReceived: maxLen}, r.reader.Read(&maxLen)
 	case ItemTypeAsynchronousOperationsWindow:
 		var maxOpsInv, maxOpsPerf uint16
-		if err := d.Read(&maxOpsInv); err != nil {
+		if err := r.reader.Read(&maxOpsInv); err != nil {
 			return nil, err
 		}
-		return &AsynchronousOperationsWindowSubItem{MaxOpsInvoked: maxOpsInv, MaxOpsPerformed: maxOpsPerf}, d.Read(&maxOpsPerf)
+		return &AsynchronousOperationsWindowSubItem{MaxOpsInvoked: maxOpsInv, MaxOpsPerformed: maxOpsPerf}, r.reader.Read(&maxOpsPerf)
 	case ItemTypeRoleSelection:
 		var uidLen uint16
 		var scuRole, scpRole byte
-		if err := d.Read(&uidLen); err != nil {
+		if err := r.reader.Read(&uidLen); err != nil {
 			return nil, err
 		}
-		sopClassUID, err := d.String(int(uidLen))
+		sopClassUID, err := r.reader.String(int(uidLen))
 		if err != nil {
 			return nil, err
 		}
-		return &RoleSelectionSubItem{SOPClassUID: sopClassUID, SCURole: scuRole, SCPRole: scpRole}, d.Read(&scuRole, &scpRole)
+		return &RoleSelectionSubItem{SOPClassUID: sopClassUID, SCURole: scuRole, SCPRole: scpRole}, r.reader.Read(&scuRole, &scpRole)
 	case ItemTypePresentationContextRequest, ItemTypePresentationContextResponse:
 		v := &PresentationContextItem{Type: itemType}
-		d.PushLimit(int(length))
-		defer d.PopLimit()
-		if err := d.Read(&v.ContextID, encSkip(1), &v.Result, encSkip(1)); err != nil {
+		r.reader.PushLimit(int(length))
+		defer r.reader.PopLimit()
+		if err := r.reader.Read(&v.ContextID, encoding.Skip(1), &v.Result, encoding.Skip(1)); err != nil {
 			return nil, err
 		} else if v.ContextID%2 != 1 {
 			return nil, fmt.Errorf("PresentationContextItem ID must be odd, but found %x", v.ContextID)
 		}
 		for {
-			item, err := decodeSubItem(d)
+			item, err := r.decodeSubItem()
 			if err != nil {
 				if errors.Is(err, io.EOF) {
 					return v, nil
@@ -368,10 +375,10 @@ func decodeSubItem(d *pduDecoder) (SubItem, error) {
 		}
 	case ItemTypeUserInformation:
 		v := &UserInformationItem{}
-		d.PushLimit(int(length))
-		defer d.PopLimit()
+		r.reader.PushLimit(int(length))
+		defer r.reader.PopLimit()
 		for {
-			item, err := decodeSubItem(d)
+			item, err := r.decodeSubItem()
 			if err != nil {
 				if errors.Is(err, io.EOF) {
 					return v, nil
@@ -385,22 +392,22 @@ func decodeSubItem(d *pduDecoder) (SubItem, error) {
 	}
 }
 
-func (pdu *AReleaseRq) WritePayload(w *pduEncoder) error { return w.Write(encSkip(4)) }
-func (pdu *AReleaseRq) String() string                   { return fmt.Sprintf("Release Request") }
+func (pdu *AReleaseRq) WritePayload(w *encoding.Writer) error { return w.Write(encoding.Skip(4)) }
+func (pdu *AReleaseRq) String() string                        { return fmt.Sprintf("Release Request") }
 
-func (pdu *AReleaseRp) WritePayload(w *pduEncoder) error { return w.Write(encSkip(4)) }
-func (pdu *AReleaseRp) String() string                   { return fmt.Sprintf("Release Response") }
+func (pdu *AReleaseRp) WritePayload(w *encoding.Writer) error { return w.Write(encoding.Skip(4)) }
+func (pdu *AReleaseRp) String() string                        { return fmt.Sprintf("Release Response") }
 
-func (pdu *AAssociate) WritePayload(w *pduEncoder) error {
+func (pdu *AAssociate) WritePayload(w *encoding.Writer) error {
 	if pdu.Type == 0 || pdu.CalledAETitle == "" || pdu.CallingAETitle == "" {
 		return fmt.Errorf("Malformed associate")
 	}
 	if err := w.Write(
 		pdu.ProtocolVersion,
-		encSkip(2),
+		encoding.Skip(2),
 		[]byte(padString(pdu.CalledAETitle, 16)),
 		[]byte(padString(pdu.CallingAETitle, 16)),
-		encSkip(32),
+		encoding.Skip(32),
 	); err != nil {
 		return err
 	}
@@ -417,17 +424,17 @@ func (pdu *AAssociate) String() string {
 	return fmt.Sprintf("%s", pdu.Type)
 }
 
-func (pdu *AAssociateRj) WritePayload(w *pduEncoder) error {
-	return w.Write(encSkip(1), &pdu.Result, &pdu.Source, &pdu.Reason)
+func (pdu *AAssociateRj) WritePayload(w *encoding.Writer) error {
+	return w.Write(encoding.Skip(1), &pdu.Result, &pdu.Source, &pdu.Reason)
 }
 func (pdu *AAssociateRj) String() string { return fmt.Sprintf("Associate Rejection") }
 
-func (pdu *AAbort) WritePayload(w *pduEncoder) error {
-	return w.Write(encSkip(2), &pdu.Source, &pdu.Reason)
+func (pdu *AAbort) WritePayload(w *encoding.Writer) error {
+	return w.Write(encoding.Skip(2), &pdu.Source, &pdu.Reason)
 }
 func (pdu *AAbort) String() string { return fmt.Sprintf("Abort") }
 
-func (pdu *PDataTf) WritePayload(w *pduEncoder) error {
+func (pdu *PDataTf) WritePayload(w *encoding.Writer) error {
 	for _, item := range pdu.Items {
 		if err := item.Write(w); err != nil {
 			return err

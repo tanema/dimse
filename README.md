@@ -8,6 +8,7 @@ as the basis for a DIMSE implementation
 
 ## Reference
 - [PDU Notes](./docs/pdu.md)
+- [dicomstandard](https://www.dicomstandard.org/standards/view/message-exchange)
 - [Dev DICOM server](https://dicomserver.co.uk/logs/)
 - [github.com/grailbio/go-netdicom](https://github.com/grailbio/go-netdicom)
 - [github.com/pydicom/pynetdicom](https://github.com/pydicom/pynetdicom/blob/main/pynetdicom/association.py)

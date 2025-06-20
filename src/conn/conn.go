@@ -3,13 +3,15 @@ package conn
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"net"
 	"time"
 
 	"github.com/suyashkumar/dicom"
-	"github.com/tanema/dimse/src/chunkreader"
+
 	"github.com/tanema/dimse/src/commands"
+	"github.com/tanema/dimse/src/encoding"
 	"github.com/tanema/dimse/src/pdu"
 	"github.com/tanema/dimse/src/serviceobjectpair"
 	"github.com/tanema/dimse/src/transfersyntax"
@@ -41,12 +43,6 @@ var DefaultConfig = &Config{
 	AETitle:           "anon-ae",
 }
 
-func Check(addr string) error {
-	testconn, err := net.Dial("tcp", addr)
-	defer testconn.Close()
-	return err
-}
-
 func Connect(ctx context.Context, addr string, cfg Config) (*Conn, error) {
 	conn, err := net.DialTimeout("tcp", addr, cfg.ConnectionTimeout)
 	if err != nil {
@@ -58,31 +54,11 @@ func Connect(ctx context.Context, addr string, cfg Config) (*Conn, error) {
 		events: make(chan readResult),
 		cfg:    cfg,
 	}
-	go c.listen()
 	return c, nil
 }
 
-func (c *Conn) listen() {
-	for {
-		data := make([]byte, pdu.DefaultMaxPDUSize)
-		n, err := c.conn.Read(data)
-		if err != nil {
-			return
-		}
-		if n > 0 {
-			pdu, err := pdu.ReadPDU(bytes.NewBuffer(data[:n]))
-			c.events <- readResult{evt: pdu, err: err}
-		}
-	}
-}
-
 func (c *Conn) Read() (pdu.PDU, error) {
-	select {
-	case evt := <-c.events:
-		return evt.evt, evt.err
-	case <-c.ctx.Done():
-		return nil, c.ctx.Err()
-	}
+	return pdu.NewReader(c.conn).Next()
 }
 
 func (c *Conn) Send(msg pdu.PDU) error {
@@ -179,7 +155,14 @@ func (c *Conn) Pdata(ctxMan *pdu.ContextManager, cmd *commands.Command, payload 
 		}
 	}
 
-	return c.readPData()
+	for {
+		cmd, ds, err := c.readPData()
+		if err != nil {
+			return nil, nil, err
+		} else if cmd.Status != commands.Pending {
+			return cmd, ds, nil
+		}
+	}
 }
 
 func (c *Conn) readPData() (*commands.Command, []dicom.Dataset, error) {
@@ -220,9 +203,5 @@ func (c *Conn) readPData() (*commands.Command, []dicom.Dataset, error) {
 }
 
 func decode(data []byte, implicit bool) (dicom.Dataset, error) {
-	r := chunkreader.New()
-	if err := r.Decode(data, implicit); err != nil {
-		return dicom.Dataset{}, err
-	}
-	return r.Dataset(), nil
+	return encoding.NewReader(bytes.NewBuffer(data), binary.LittleEndian).Decode(implicit)
 }

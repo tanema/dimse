@@ -2,9 +2,11 @@ package commands
 
 //go:generate stringer -type Kind
 //go:generate stringer -type DataSetType
+//go:generate stringer -type Status
 type (
 	Kind        int
 	DataSetType int
+	Status      int
 )
 
 const (
@@ -34,4 +36,14 @@ const (
 
 	Null    DataSetType = 0x101
 	NonNull DataSetType = 1
+
+	Success               Status = 0
+	Cancel                Status = 0xFE00
+	SOPClassNotSupported  Status = 0x0112
+	InvalidArgumentValue  Status = 0x0115
+	InvalidAttributeValue Status = 0x0106
+	InvalidObjectInstance Status = 0x0117
+	UnrecognizedOperation Status = 0x0211
+	NotAuthorized         Status = 0x0124
+	Pending               Status = 0xff00
 )

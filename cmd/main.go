@@ -19,8 +19,7 @@ func checkErr(scope string, err error) {
 
 func main() {
 	ctx := context.Background()
-	client, err := dimse.NewClient("www.dicomserver.co.uk:104", nil)
-	checkErr("connection", err)
+	client := dimse.NewClient("www.dicomserver.co.uk:104", nil)
 	checkErr("echo", echo(ctx, client))
 
 	q, err := client.Query(
@@ -39,11 +38,11 @@ func echo(ctx context.Context, client *dimse.Client) error {
 }
 
 func find(ctx context.Context, q *dimse.Query) error {
-	data, err := q.Find(ctx)
+	resp, data, err := q.Find(ctx)
 	if err != nil {
 		return err
 	}
-	log.Printf("Got find response, found %v docs\n", len(data))
+	log.Printf("Got c-find %s response, found %v docs\n", resp.Status, len(data))
 	for i, doc := range data {
 		log.Printf("-> doc %v\n", i)
 		for _, e := range doc.Elements {
@@ -59,7 +58,7 @@ func get(ctx context.Context, q *dimse.Query) error {
 	if err != nil {
 		return err
 	}
-	log.Printf("Got find response, found %v docs\n", len(data))
+	log.Printf("Got c-get response, found %v docs\n", len(data))
 	for i, doc := range data {
 		log.Printf("-> doc %v\n", i)
 		for _, e := range doc.Elements {
