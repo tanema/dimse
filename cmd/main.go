@@ -3,12 +3,15 @@ package main
 import (
 	"context"
 	"log"
+	"sync"
 
 	"github.com/suyashkumar/dicom"
 	"github.com/suyashkumar/dicom/pkg/tag"
 	"github.com/tanema/dimse"
 	"github.com/tanema/dimse/src/query"
 )
+
+type action func(context.Context, *sync.WaitGroup, *dimse.Client)
 
 func checkErr(scope string, err error) {
 	if err != nil {
@@ -18,55 +21,68 @@ func checkErr(scope string, err error) {
 }
 
 func main() {
-	ctx := context.Background()
 	client := dimse.NewClient("www.dicomserver.co.uk:104", nil)
-	checkErr("echo", echo(ctx, client))
+	ctx := context.Background()
+	var wg sync.WaitGroup
+	for _, act := range []action{echo, find, get} {
+		wg.Add(1)
+		act(ctx, &wg, client)
+	}
+	wg.Wait()
+}
 
+func echo(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client) {
+	defer wg.Done()
+	checkErr("echo", client.Echo(ctx))
+}
+
+func find(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client) {
+	defer wg.Done()
 	q, err := client.Query(
-		query.Patient,
+		query.Study,
 		[]*dicom.Element{
+			newElem(tag.UID, []string{"*"}),
+			newElem(tag.StudyInstanceUID, []string{""}),
+			newElem(tag.SeriesInstanceUID, []string{""}),
 			newElem(tag.PatientID, []string{"3af4bf39-601f-4917-a577-9bbbc8b99366"}),
+			newElem(tag.StudyDescription, []string{""}),
 		},
 	)
-	checkErr("query", err)
-	checkErr("find", find(ctx, q))
-	checkErr("get", get(ctx, q))
+	checkErr("find query", err)
+	data, err := q.Find(ctx)
+	checkErr("find", err)
+	printResp("C-FIND", data)
 }
 
-func echo(ctx context.Context, client *dimse.Client) error {
-	return client.Echo(ctx)
-}
-
-func find(ctx context.Context, q *dimse.Query) error {
-	resp, data, err := q.Find(ctx)
-	if err != nil {
-		return err
-	}
-	log.Printf("Got c-find %s response, found %v docs\n", resp.Status, len(data))
-	for i, doc := range data {
-		log.Printf("-> doc %v\n", i)
-		for _, e := range doc.Elements {
-			info, _ := tag.Find(e.Tag)
-			log.Printf("\t-> %v = %v\n", info.Name, e.Value)
-		}
-	}
-	return nil
-}
-
-func get(ctx context.Context, q *dimse.Query) error {
+func get(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client) {
+	defer wg.Done()
+	q, err := client.Query(
+		query.Study,
+		[]*dicom.Element{
+			newElem(tag.UID, []string{"*"}),
+			newElem(tag.StudyInstanceUID, []string{""}),
+			newElem(tag.SeriesInstanceUID, []string{""}),
+			newElem(tag.PatientID, []string{"3af4bf39-601f-4917-a577-9bbbc8b99366"}),
+			newElem(tag.StudyDescription, []string{""}),
+		},
+	)
 	data, err := q.Get(ctx)
-	if err != nil {
-		return err
+	checkErr("get", err)
+	printResp("C-GET", data)
+}
+
+func printResp(label string, d []dicom.Dataset) {
+	if len(d) == 0 {
+		return
 	}
-	log.Printf("Got c-get response, found %v docs\n", len(data))
-	for i, doc := range data {
+	log.Printf("%s response\n", label)
+	for i, doc := range d {
 		log.Printf("-> doc %v\n", i)
 		for _, e := range doc.Elements {
 			info, _ := tag.Find(e.Tag)
 			log.Printf("\t-> %v = %v\n", info.Name, e.Value)
 		}
 	}
-	return nil
 }
 
 func newElem(t tag.Tag, val any) *dicom.Element {
@@ -75,12 +91,4 @@ func newElem(t tag.Tag, val any) *dicom.Element {
 		log.Fatalf("Err while creating element %v %v %T: %v", t, val, val, err)
 	}
 	return elem
-}
-
-func mustGet(doc dicom.Dataset, t tag.Tag) any {
-	elem, _ := doc.FindElementByTag(t)
-	if elem == nil {
-		return nil
-	}
-	return elem.Value
 }

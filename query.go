@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"slices"
 
 	"github.com/suyashkumar/dicom"
 	"github.com/suyashkumar/dicom/pkg/tag"
@@ -18,109 +17,94 @@ import (
 type Query struct {
 	client   *Client
 	payload  []byte
-	Level    query.Level
-	Filter   []*dicom.Element
-	Priority int // CStore CMove CGet CFind
+	level    query.Level
+	priority int // CStore CMove CGet CFind
 }
 
+// Build the query to be used to run a command. Will return an error if the query
+// is empty, or the query elements are invalid.
 func (c *Client) Query(level query.Level, q []*dicom.Element) (*Query, error) {
-	query := &Query{
-		client: c,
-		Level:  level,
-		Filter: q,
-	}
-
 	if len(q) == 0 {
 		return nil, fmt.Errorf("Query: empty query")
-	} else if err := query.encodePayload(); err != nil {
-		return nil, fmt.Errorf("Query: unable to encode query payload %v", err)
 	}
-	return query, nil
+
+	buf := bytes.NewBuffer([]byte{})
+	w, err := dicom.NewWriter(buf)
+	if err != nil {
+		return nil, err
+	}
+	w.SetTransferSyntax(binary.LittleEndian, true)
+	if elem, err := dicom.NewElement(tag.QueryRetrieveLevel, []string{string(level)}); err != nil {
+		return nil, err
+	} else if err := w.WriteElement(elem); err != nil {
+		return nil, err
+	}
+	for _, elem := range q {
+		if err := w.WriteElement(elem); err != nil {
+			return nil, err
+		}
+	}
+
+	return &Query{
+		client:  c,
+		level:   level,
+		payload: buf.Bytes(),
+	}, nil
 }
 
+// SetPriority will set the priority value for the query.
 func (q *Query) SetPriority(p int) *Query {
-	q.Priority = p
+	q.priority = p
 	return q
 }
 
-func (q *Query) Find(ctx context.Context) (*commands.Command, []dicom.Dataset, error) {
-	resp, data, err := q.client.dispatch(ctx, &commands.Command{
+// Find will run a C-FIND service command on the built query
+func (q *Query) Find(ctx context.Context) ([]dicom.Dataset, error) {
+	return q.client.dispatch(ctx, commands.CFINDRSP, &commands.Command{
 		CommandField:        commands.CFINDRQ,
 		AffectedSOPClassUID: []serviceobjectpair.UID{q.sopForCmd(commands.CFINDRQ)},
 		CommandDataSetType:  commands.NonNull,
-		Priority:            q.Priority,
+		Priority:            q.priority,
 	}, q.payload)
-	if err != nil {
-		return nil, nil, err
-	} else if resp.CommandField != commands.CFINDRSP {
-		return nil, nil, fmt.Errorf("received %s in response to find", resp.CommandField)
-	}
-	return resp, data, nil
 }
 
+// Get will run a C-GET service command on the built query
 func (q *Query) Get(ctx context.Context) ([]dicom.Dataset, error) {
-	resp, data, err := q.client.dispatch(ctx, &commands.Command{
+	return q.client.dispatch(ctx, commands.CGETRSP, &commands.Command{
 		CommandField:        commands.CGETRQ,
 		AffectedSOPClassUID: []serviceobjectpair.UID{q.sopForCmd(commands.CGETRQ)},
 		CommandDataSetType:  commands.NonNull,
-		Priority:            q.Priority,
+		Priority:            q.priority,
 	}, q.payload)
-	if err != nil {
-		return nil, err
-	} else if resp.CommandField != commands.CGETRSP {
-		return nil, fmt.Errorf("received %s in response to find", resp.CommandField)
-	}
-	return data, nil
 }
 
+// Move will run a C-MOVE service command on the built query
 func (q *Query) Move(ctx context.Context, dst string) ([]dicom.Dataset, error) {
-	resp, data, err := q.client.dispatch(ctx, &commands.Command{
+	return q.client.dispatch(ctx, commands.CMOVERSP, &commands.Command{
 		CommandField:        commands.CMOVERQ,
 		AffectedSOPClassUID: []serviceobjectpair.UID{q.sopForCmd(commands.CMOVERQ)},
-		Priority:            q.Priority,
+		Priority:            q.priority,
 		MoveDestination:     dst,
 		CommandDataSetType:  commands.NonNull,
 	}, q.payload)
-	if err != nil {
-		return nil, err
-	} else if resp.CommandField != commands.CMOVERSP {
-		return nil, fmt.Errorf("received %s in response to find", resp.CommandField)
-	}
-	return data, nil
 }
 
+// Store will run a C-STORE service command on the built query
 func (q *Query) Store(ctx context.Context, inst []serviceobjectpair.UID, id int, dst, title string) ([]dicom.Dataset, error) {
-	resp, data, err := q.client.dispatch(ctx, &commands.Command{
+	return q.client.dispatch(ctx, commands.CSTORERSP, &commands.Command{
 		CommandField:                         commands.CSTORERQ,
 		AffectedSOPClassUID:                  []serviceobjectpair.UID{q.sopForCmd(commands.CMOVERQ)},
 		CommandDataSetType:                   commands.NonNull,
-		Priority:                             q.Priority,
+		Priority:                             q.priority,
 		MoveDestination:                      dst,
 		AffectedSOPInstanceUID:               inst,
 		MoveOriginatorApplicationEntityTitle: title,
 		MoveOriginatorMessageID:              id,
 	}, q.payload)
-	if err != nil {
-		return nil, err
-	} else if resp.CommandField != commands.CMOVERSP {
-		return nil, fmt.Errorf("received %s in response to find", resp.CommandField)
-	}
-	return data, nil
-}
-
-// collectSOPs will collect SOPs from all commands to be put into the association
-// request, and ensure that they are unique.
-func collectSOPs(cmds ...*commands.Command) []serviceobjectpair.UID {
-	sops := []serviceobjectpair.UID{}
-	for _, cmd := range cmds {
-		sops = append(sops, cmd.AffectedSOPClassUID...)
-	}
-	slices.Sort(sops)
-	return slices.Compact(sops)
 }
 
 func (q *Query) sopForCmd(kind commands.Kind) serviceobjectpair.UID {
-	switch q.Level {
+	switch q.level {
 	case query.Patient:
 		switch kind {
 		case commands.CFINDRQ:
@@ -141,42 +125,4 @@ func (q *Query) sopForCmd(kind commands.Kind) serviceobjectpair.UID {
 		}
 	}
 	return ""
-}
-
-func (q *Query) encodePayload() error {
-	foundQRLevel := false
-	buf := bytes.NewBuffer([]byte{})
-	w, err := dicom.NewWriter(buf)
-	if err != nil {
-		return err
-	}
-	w.SetTransferSyntax(binary.LittleEndian, true)
-	for _, elem := range q.Filter {
-		if elem.Tag == tag.QueryRetrieveLevel {
-			foundQRLevel = true
-		}
-		if err := w.WriteElement(elem); err != nil {
-			return err
-		}
-	}
-	if !foundQRLevel {
-		var qrLevelString string
-		switch q.Level {
-		case query.Patient:
-			qrLevelString = "PATIENT"
-		case query.Study:
-			qrLevelString = "STUDY"
-		case query.Series:
-			qrLevelString = "SERIES"
-		}
-		elem, err := dicom.NewElement(tag.QueryRetrieveLevel, []string{qrLevelString})
-		if err != nil {
-			return err
-		}
-		if err := w.WriteElement(elem); err != nil {
-			return err
-		}
-	}
-	q.payload = buf.Bytes()
-	return nil
 }

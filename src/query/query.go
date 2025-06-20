@@ -1,12 +1,9 @@
 package query
 
-//go:generate stringer -type Level
-type (
-	Level int
-)
+type Level string
 
 const (
-	Patient Level = iota
-	Study
-	Series
+	Patient Level = "PATIENT"
+	Study   Level = "STUDY"
+	Series  Level = "SERIES"
 )

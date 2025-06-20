@@ -155,12 +155,15 @@ func (c *Conn) Pdata(ctxMan *pdu.ContextManager, cmd *commands.Command, payload 
 		}
 	}
 
+	allDataSets := []dicom.Dataset{}
 	for {
 		cmd, ds, err := c.readPData()
 		if err != nil {
 			return nil, nil, err
-		} else if cmd.Status != commands.Pending {
-			return cmd, ds, nil
+		}
+		allDataSets = append(allDataSets, ds...)
+		if cmd.Status != commands.Pending {
+			return cmd, allDataSets, nil
 		}
 	}
 }
