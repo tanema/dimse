@@ -5,13 +5,13 @@ import (
 	"github.com/tanema/dimse/src/transfersyntax"
 )
 
-func CreateAssoc(aetitle string, chunkSize uint32, sopsClasses []serviceobjectpair.UID, transfersyntaxes []transfersyntax.UID) (PDU, *ContextManager) {
+func CreateAssoc(aetitle string, chunkSize uint32, sopsClasses []serviceobjectpair.UID, transfersyntaxes []transfersyntax.UID) (*AAssociate, *ContextManager) {
 	assoc := &AAssociate{
 		Type:            TypeAAssociateRq,
 		ProtocolVersion: CurrentProtocolVersion,
 		CalledAETitle:   "anon-called-ae",
 		CallingAETitle:  aetitle,
-		Items:           []SubItem{&ApplicationContextItem{Name: DICOMApplicationContextItemName}},
+		Items:           []any{ApplicationContextItem{Name: DICOMApplicationContextItemName}},
 	}
 
 	cm := NewContextManager()
@@ -20,29 +20,29 @@ func CreateAssoc(aetitle string, chunkSize uint32, sopsClasses []serviceobjectpa
 	}
 
 	assoc.Items = append(assoc.Items,
-		&UserInformationItem{
-			Items: []SubItem{
-				&UserInformationMaximumLengthItem{chunkSize},
-				&ImplementationClassUIDSubItem{ImplementationClassUID},
-				&ImplementationVersionNameSubItem{ImplementationName},
+		UserInformationItem{
+			Items: []any{
+				UserInformationMaximumLengthItem{chunkSize},
+				ImplementationClassUIDSubItem{ImplementationClassUID},
+				ImplementationVersionNameSubItem{ImplementationName},
 			},
 		})
 	return assoc, cm
 }
 
-func CreateRelease() PDU {
+func CreateRelease() *AReleaseRq {
 	return &AReleaseRq{}
 }
 
-func CreateAbort() PDU {
+func CreateAbort() *AAbort {
 	return &AAbort{
 		Source: SourceULServiceUser,
 		Reason: AbortReasonNotSpecified,
 	}
 }
 
-func CreatePdata(ctxID uint8, cmd bool, data []byte) []PDU {
-	var pdus []PDU
+func CreatePdata(ctxID uint8, cmd bool, data []byte) []*PDataTf {
+	var pdus []*PDataTf
 	// two byte header overhead.
 	maxChunkSize := int(DefaultMaxPDUSize - 8)
 	for len(data) > 0 {

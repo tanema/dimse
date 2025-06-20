@@ -69,12 +69,12 @@ func (cm *ContextManager) GetWithCtxID(id uint8) (*PresentationContext, error) {
 	return pc, nil
 }
 
-func (p *PresentationContext) ToPCI() *PresentationContextItem {
-	syntaxItems := []SubItem{&AbstractSyntaxSubItem{Name: string(p.ServiceObjectPair)}}
+func (p *PresentationContext) ToPCI() PresentationContextItem {
+	syntaxItems := []any{AbstractSyntaxSubItem{Name: string(p.ServiceObjectPair)}}
 	for _, syntaxUID := range p.TransferSyntaxes {
-		syntaxItems = append(syntaxItems, &TransferSyntaxSubItem{Name: string(syntaxUID)})
+		syntaxItems = append(syntaxItems, TransferSyntaxSubItem{Name: string(syntaxUID)})
 	}
-	return &PresentationContextItem{
+	return PresentationContextItem{
 		Type:      ItemTypePresentationContextRequest,
 		ContextID: p.ContextID,
 		Items:     syntaxItems,

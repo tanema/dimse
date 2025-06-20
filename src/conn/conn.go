@@ -31,7 +31,7 @@ type (
 		AETitle           string
 	}
 	readResult struct {
-		evt pdu.PDU
+		evt any
 		err error
 	}
 )
@@ -57,11 +57,11 @@ func Connect(ctx context.Context, addr string, cfg Config) (*Conn, error) {
 	return c, nil
 }
 
-func (c *Conn) Read() (pdu.PDU, error) {
+func (c *Conn) Read() (any, error) {
 	return pdu.NewReader(c.conn).Next()
 }
 
-func (c *Conn) Send(msg pdu.PDU) error {
+func (c *Conn) Send(msg any) error {
 	data, err := pdu.EncodePDU(msg)
 	if err != nil {
 		return err
