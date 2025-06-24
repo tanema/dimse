@@ -60,6 +60,7 @@ const (
 	RejectReasonCallingAETitleNotRecognized        RejectReasonType = 3
 	RejectReasonCalledAETitleNotRecognized         RejectReasonType = 7
 
+	SourceULNotSpecified                SourceType = 0
 	SourceULServiceUser                 SourceType = 1
 	SourceULServiceProviderACSE         SourceType = 2
 	SourceULServiceProviderPresentation SourceType = 3

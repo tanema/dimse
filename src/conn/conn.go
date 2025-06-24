@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"sync/atomic"
 	"time"
 
 	"github.com/suyashkumar/dicom"
@@ -14,6 +15,7 @@ import (
 	"github.com/tanema/dimse/src/encoding"
 	"github.com/tanema/dimse/src/pdu"
 	"github.com/tanema/dimse/src/serviceobjectpair"
+	"github.com/tanema/dimse/src/status"
 	"github.com/tanema/dimse/src/transfersyntax"
 )
 
@@ -21,6 +23,7 @@ type (
 	Conn struct {
 		ctx    context.Context
 		conn   net.Conn
+		msgID  int32
 		events chan readResult
 		cfg    Config
 	}
@@ -48,13 +51,12 @@ func Connect(ctx context.Context, addr string, cfg Config) (*Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := &Conn{
+	return &Conn{
 		ctx:    ctx,
 		conn:   conn,
 		events: make(chan readResult),
 		cfg:    cfg,
-	}
-	return c, nil
+	}, nil
 }
 
 func (c *Conn) Read() (any, error) {
@@ -98,7 +100,9 @@ func (c *Conn) Associate(sopsClasses []serviceobjectpair.UID, transfersyntaxes [
 		}
 		return ctxManager, nil
 	case *pdu.AAssociateRj:
-		return nil, fmt.Errorf("association rejected %v", pt.Reason)
+		return nil, fmt.Errorf("association rejected source: %s reason: %s", pt.Source, pt.Reason)
+	case *pdu.AAbort:
+		return nil, fmt.Errorf("association aborted source: %s reason: %s", pt.Source, pt.Reason)
 	default:
 		return nil, fmt.Errorf("unexpected message %T after sending associate", evt)
 	}
@@ -123,54 +127,39 @@ func (c *Conn) Realease() error {
 func (c *Conn) Abort() { c.Send(pdu.CreateAbort()) }
 
 func (c *Conn) Pdata(ctxMan *pdu.ContextManager, cmd *commands.Command, payload []byte) (*commands.Command, []dicom.Dataset, error) {
-	var ctxID uint8
-	//var ts transfersyntax.UID
-	for _, classUID := range cmd.AffectedSOPClassUID {
-		if pctx, err := ctxMan.GetWithSOP(classUID); err == nil {
-			ctxID = pctx.ContextID
-			//ts = pctx.AcceptedTransferSyntax
-			break
-		}
-	}
-
-	// This should not really ever happen because we collect sops from the command
-	// and feed it into the associate call. The only time this could happen is if
-	// the server rejected a specific presentation context.
-	if ctxID == 0 {
-		return nil, nil, fmt.Errorf("Could not find an associated presentation context item for command which means the server rejected the AffectedSOPClassUID you requested.")
-	}
-
-	value, err := commands.Encode(cmd, transfersyntax.ImplicitVRLittleEndian)
+	ctxID, ts, err := ctxMan.GetAccepted(cmd.AffectedSOPClassUID...)
 	if err != nil {
 		return nil, nil, err
-	}
-	// encode the command first and then send data along
-	pdatas := pdu.CreatePdata(ctxID, true, value)
-	if cmd.CommandDataSetType != commands.Null {
-		pdatas = append(pdatas, pdu.CreatePdata(ctxID, false, payload)...)
-	}
-	for _, pd := range pdatas {
-		if err := c.Send(pd); err != nil {
-			return nil, nil, err
-		}
+	} else if err := c.sendCmd(ctxID, cmd, payload); err != nil {
+		return nil, nil, err
 	}
 
 	allDataSets := []dicom.Dataset{}
+	bo, implicit := transfersyntax.Info(ts)
 	for {
-		cmd, ds, err := c.readPData()
+		cmd, ds, err := c.readPData(ts, ctxID, bo, implicit)
 		if err != nil {
 			return nil, nil, err
 		}
 		allDataSets = append(allDataSets, ds...)
-		if cmd.Status != commands.Pending {
+		switch cmd.Status {
+		case status.Pending:
+		case status.Successful:
 			return cmd, allDataSets, nil
+		default:
+			if status.StatusLevel(cmd.Status) == status.Warning {
+				return cmd, allDataSets, nil
+			} else if status.StatusLevel(cmd.Status) == status.Failure {
+				return cmd, allDataSets, fmt.Errorf("received %s status %s from server: %s", cmd.CommandField, cmd.Status, cmd.ErrorComment)
+			}
 		}
 	}
 }
 
-func (c *Conn) readPData() (*commands.Command, []dicom.Dataset, error) {
+func (c *Conn) readPData(ts transfersyntax.UID, ctxID uint8, bo binary.ByteOrder, implicit bool) (*commands.Command, []dicom.Dataset, error) {
 	var cmd *commands.Command
 	sets := []dicom.Dataset{}
+	buffer := []byte{}
 	for {
 		evt, err := c.Read()
 		if err != nil {
@@ -180,14 +169,17 @@ func (c *Conn) readPData() (*commands.Command, []dicom.Dataset, error) {
 		case *pdu.PDataTf:
 			for _, item := range tevt.Items {
 				if item.Command {
-					cmd, err = commands.Decode(item.Value, transfersyntax.ImplicitVRLittleEndian)
-					if err != nil {
+					if cmd, err = commands.Decode(item.Value, ts); err != nil {
 						return nil, nil, err
 					} else if cmd.CommandDataSetType == commands.Null {
-						return cmd, nil, nil
+						return cmd, sets, nil
 					}
-				} else {
-					payload, err := decode(item.Value, false)
+					continue
+				}
+
+				switch cmd.CommandField {
+				case commands.CFINDRSP, commands.CGETRSP:
+					payload, err := encoding.NewReader(bytes.NewBuffer(item.Value), bo, implicit).Decode()
 					if err != nil {
 						return nil, nil, err
 					}
@@ -195,6 +187,19 @@ func (c *Conn) readPData() (*commands.Command, []dicom.Dataset, error) {
 					if item.Last {
 						return cmd, sets, nil
 					}
+				case commands.CSTORERQ:
+					buffer = append(buffer, item.Value...)
+					if item.Last {
+						d, err := dicom.Parse(bytes.NewBuffer(buffer), int64(len(buffer)), nil)
+						if err != nil {
+							return nil, nil, err
+						} else if err := c.cstoreRsp(ctxID, cmd); err != nil {
+							return nil, nil, err
+						}
+						sets = append(sets, d)
+					}
+				default:
+					return nil, nil, fmt.Errorf("unhandled message type %s", cmd.CommandField)
 				}
 			}
 		case *pdu.AAbort:
@@ -205,6 +210,34 @@ func (c *Conn) readPData() (*commands.Command, []dicom.Dataset, error) {
 	}
 }
 
-func decode(data []byte, implicit bool) (dicom.Dataset, error) {
-	return encoding.NewReader(bytes.NewBuffer(data), binary.LittleEndian).Decode(implicit)
+func (c *Conn) cstoreRsp(ctxID uint8, cmd *commands.Command) error {
+	return c.sendCmd(ctxID, &commands.Command{
+		CommandField:              commands.CSTORERSP,
+		MessageIDBeingRespondedTo: cmd.MessageID,
+		Status:                    status.Successful,
+		AffectedSOPClassUID:       cmd.AffectedSOPClassUID,
+		AffectedSOPInstanceUID:    cmd.AffectedSOPInstanceUID,
+		CommandDataSetType:        commands.Null,
+	}, nil)
+}
+
+func (c *Conn) sendCmd(ctxID uint8, cmd *commands.Command, payload []byte) error {
+	cmd.MessageID = int(atomic.AddInt32(&c.msgID, 1))
+	value, err := commands.Encode(cmd, transfersyntax.ImplicitVRLittleEndian)
+	if err != nil {
+		return err
+	}
+
+	// encode the command first and then send data along
+	pdatas := pdu.CreatePdata(ctxID, true, value)
+	if cmd.CommandDataSetType != commands.Null {
+		pdatas = append(pdatas, pdu.CreatePdata(ctxID, false, payload)...)
+	}
+
+	for _, pd := range pdatas {
+		if err := c.Send(pd); err != nil {
+			return err
+		}
+	}
+	return nil
 }

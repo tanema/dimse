@@ -3,7 +3,6 @@ package dimse
 import (
 	"context"
 	"fmt"
-	"sync/atomic"
 
 	"github.com/suyashkumar/dicom"
 	"github.com/tanema/dimse/src/commands"
@@ -14,9 +13,8 @@ import (
 type (
 	// Client is the object that will interact with the PACs
 	Client struct {
-		msgID int32
-		cfg   ClientConfig
-		pool  *conn.Pool
+		cfg  ClientConfig
+		pool *conn.Pool
 	}
 	// ClientConfig allows for configuring how the client connects to PACS
 	ClientConfig struct {
@@ -50,21 +48,19 @@ func (c *Client) dispatch(ctx context.Context, expected commands.Kind, cmd *comm
 	}
 	defer c.pool.Release(conn)
 
-	cmd.MessageID = int(atomic.AddInt32(&c.msgID, 1))
 	ctxMan, err := conn.Associate(cmd.AffectedSOPClassUID, nil)
 	if err != nil {
 		return nil, err
 	}
+
 	respCmd, data, err := conn.Pdata(ctxMan, cmd, payload)
 	if err != nil {
 		conn.Abort()
 		return nil, err
 	} else if err := conn.Realease(); err != nil {
 		return nil, err
-	} else if cmd.MessageID != respCmd.MessageID {
+	} else if cmd.MessageID != respCmd.MessageIDBeingRespondedTo {
 		return nil, fmt.Errorf("received %v message id but sent %v", cmd.MessageID, respCmd.MessageID)
-	} else if respCmd.Status != commands.Success {
-		return nil, fmt.Errorf("received %s status: %s", respCmd.Status, respCmd.ErrorComment)
 	} else if respCmd.CommandField != expected {
 		return nil, fmt.Errorf("received %s in response to %s", expected, cmd.CommandField)
 	}

@@ -24,7 +24,8 @@ func main() {
 	client := dimse.NewClient("www.dicomserver.co.uk:104", nil)
 	ctx := context.Background()
 	var wg sync.WaitGroup
-	for _, act := range []action{echo, find, get} {
+	acts := []action{echo, find, get}
+	for _, act := range acts {
 		wg.Add(1)
 		act(ctx, &wg, client)
 	}
@@ -44,7 +45,7 @@ func find(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client) {
 			newElem(tag.UID, []string{"*"}),
 			newElem(tag.StudyInstanceUID, []string{""}),
 			newElem(tag.SeriesInstanceUID, []string{""}),
-			newElem(tag.PatientID, []string{"3af4bf39-601f-4917-a577-9bbbc8b99366"}),
+			newElem(tag.PatientID, []string{"N8V08W1E6N7C"}),
 			newElem(tag.StudyDescription, []string{""}),
 		},
 	)
@@ -57,13 +58,9 @@ func find(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client) {
 func get(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client) {
 	defer wg.Done()
 	q, err := client.Query(
-		query.Study,
+		query.Patient,
 		[]*dicom.Element{
-			newElem(tag.UID, []string{"*"}),
-			newElem(tag.StudyInstanceUID, []string{""}),
-			newElem(tag.SeriesInstanceUID, []string{""}),
-			newElem(tag.PatientID, []string{"3af4bf39-601f-4917-a577-9bbbc8b99366"}),
-			newElem(tag.StudyDescription, []string{""}),
+			newElem(tag.PatientID, []string{"N8V08W1E6N7C"}),
 		},
 	)
 	data, err := q.Get(ctx)

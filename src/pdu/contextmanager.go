@@ -53,16 +53,21 @@ func (cm *ContextManager) Accept(ctxID uint8, ts transfersyntax.UID) error {
 	return nil
 }
 
+func (cm *ContextManager) GetAccepted(sops ...serviceobjectpair.UID) (uint8, transfersyntax.UID, error) {
+	for _, classUID := range sops {
+		if pctx, err := cm.GetWithSOP(classUID); err == nil && pctx.Accepted {
+			return pctx.ContextID, pctx.AcceptedTransferSyntax, nil
+		}
+	}
+	return 0, "", fmt.Errorf("Could not find an associated presentation context item for command which means the server rejected the AffectedSOPClassUID you requested.")
+}
+
 func (cm *ContextManager) GetWithSOP(sop serviceobjectpair.UID) (*PresentationContext, error) {
 	ctxID, found := cm.sopToID[sop]
 	if !found {
 		return nil, fmt.Errorf("sop %v not register in context manager", sop)
 	}
-	return cm.GetWithCtxID(ctxID)
-}
-
-func (cm *ContextManager) GetWithCtxID(id uint8) (*PresentationContext, error) {
-	pc := cm.idToContext[id]
+	pc := cm.idToContext[ctxID]
 	if !pc.Accepted {
 		return nil, fmt.Errorf("sop %v not accepted during association", pc.ServiceObjectPair)
 	}

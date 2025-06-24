@@ -11,6 +11,7 @@ import (
 
 	"github.com/tanema/dimse/src/encoding"
 	"github.com/tanema/dimse/src/serviceobjectpair"
+	"github.com/tanema/dimse/src/status"
 	"github.com/tanema/dimse/src/tags"
 	"github.com/tanema/dimse/src/transfersyntax"
 )
@@ -18,26 +19,36 @@ import (
 type (
 	// Command captures both a request and response of a PDU command
 	Command struct {
-		Dataset             dicom.Dataset
-		CommandField        Kind
-		AffectedSOPClassUID []serviceobjectpair.UID
-		MessageID           int
-		CommandDataSetType  DataSetType
-		Status              Status
-		ErrorComment        string
-		Priority            int    // CStore CMove CGet CFind
-		MoveDestination     string // CMove
-		// CMove CGet
-		NumberOfRemainingSuboperations int
-		NumberOfCompletedSuboperations int
-		NumberOfFailedSuboperations    int
-		NumberOfWarningSuboperations   int
-		// CStore
+		CommandField                         Kind
+		AffectedSOPClassUID                  []serviceobjectpair.UID
+		MessageID                            int
+		MessageIDBeingRespondedTo            int
+		CommandDataSetType                   DataSetType
+		Status                               status.Status
+		ErrorComment                         string
+		Priority                             Priority
+		MoveDestination                      string
+		NumberOfRemainingSuboperations       int
+		NumberOfCompletedSuboperations       int
+		NumberOfFailedSuboperations          int
+		NumberOfWarningSuboperations         int
 		AffectedSOPInstanceUID               []serviceobjectpair.UID
 		MoveOriginatorApplicationEntityTitle string
 		MoveOriginatorMessageID              int
+		CommandGroupLength                   int
 	}
 )
+
+func (c *Command) String() string {
+	return fmt.Sprintf("[%s]:%v %s HasData: %v ErrComment: %s Priority: %v",
+		c.CommandField,
+		c.MessageID,
+		c.Status,
+		c.CommandDataSetType != Null,
+		c.ErrorComment,
+		c.Priority,
+	)
+}
 
 func Encode(cmd *Command, ts transfersyntax.UID) ([]byte, error) {
 	buf := bytes.NewBuffer([]byte{})
@@ -59,18 +70,20 @@ func (c *Command) encode(w *dicom.Writer) error {
 	}
 	if err := writeElement(w, tags.CommandField, []int{int(c.CommandField)}); err != nil {
 		return err
-	} else if err := writeElement(w, tags.StatusTag, []int{int(Pending)}); err != nil {
+	} else if err := writeElement(w, tags.StatusTag, []int{int(status.Pending)}); err != nil {
 		return err
 	} else if err := writeElement(w, tags.AffectedSOPClassUID, sops); err != nil {
 		return err
 	} else if err := writeElement(w, tags.MessageID, []int{c.MessageID}); err != nil {
+		return err
+	} else if err := writeElement(w, tags.MessageIDBeingRespondedTo, []int{c.MessageIDBeingRespondedTo}); err != nil {
 		return err
 	} else if err := writeElement(w, tags.CommandDataSetType, []int{int(c.CommandDataSetType)}); err != nil {
 		return err
 	}
 
 	if c.CommandField == CSTORERQ || c.CommandField == CMOVERQ || c.CommandField == CGETRQ || c.CommandField == CFINDRQ {
-		if err := writeElement(w, tags.Priority, []int{c.Priority}); err != nil {
+		if err := writeElement(w, tags.Priority, []int{int(c.Priority)}); err != nil {
 			return err
 		}
 	}
@@ -105,59 +118,47 @@ func (c *Command) encode(w *dicom.Writer) error {
 }
 
 func Decode(data []byte, ts transfersyntax.UID) (*Command, error) {
-	d, err := encoding.NewReader(bytes.NewBuffer(data), binary.LittleEndian).Decode(true)
+	d, err := encoding.NewReader(bytes.NewBuffer(data), binary.LittleEndian, true).Decode()
 	if err != nil {
 		return nil, err
 	}
-
-	cmd := &Command{Dataset: d}
-	var cdst, kind, status int
-	var asopcuid []string
+	cmd := &Command{}
+	var cdst, kind, stat, priority int
+	var asopcuid, asopiuid []string
 	if err := readElementVal(d, tags.CommandField, &kind, true); err != nil {
 		return nil, fmt.Errorf("issues reading CommandField %v", err)
 	} else if err := readElementVals(d, tags.AffectedSOPClassUID, &asopcuid, true); err != nil {
 		return nil, fmt.Errorf("issues reading AffectedSOPClassUID %v", err)
-	} else if err := readElementVal(d, tags.MessageIDBeingRespondedTo, &cmd.MessageID, true); err != nil {
-		return nil, fmt.Errorf("issues reading MessageIDBeingRespondedTo %v", err)
 	} else if err := readElementVal(d, tags.CommandDataSetType, &cdst, true); err != nil {
 		return nil, fmt.Errorf("issues reading CommandDataSetType %v", err)
-	} else if err := readElementVal(d, tags.StatusTag, &status, true); err != nil {
-		return nil, fmt.Errorf("issues reading StatusTag %v", err)
-	} else if err := readElementVal(d, tags.ErrorComment, &cmd.ErrorComment, false); err != nil {
-		return nil, fmt.Errorf("issues reading ErrorComment %v", err)
 	}
 
-	cmd.Status = Status(status)
+	readElementVal(d, tags.StatusTag, &stat, false)
+	readElementVal(d, tags.ErrorComment, &cmd.ErrorComment, false)
+	readElementVal(d, tags.Priority, &priority, false)
+	readElementVals(d, tags.AffectedSOPInstanceUID, &asopiuid, false)
+	readElementVals(d, tags.MoveOriginatorApplicationEntityTitle, &cmd.MoveOriginatorApplicationEntityTitle, false)
+	readElementVals(d, tags.MoveOriginatorMessageID, &cmd.MoveOriginatorMessageID, false)
+	readElementVal(d, tags.NumberOfRemainingSuboperations, &cmd.NumberOfRemainingSuboperations, false)
+	readElementVal(d, tags.NumberOfCompletedSuboperations, &cmd.NumberOfCompletedSuboperations, false)
+	readElementVal(d, tags.NumberOfFailedSuboperations, &cmd.NumberOfFailedSuboperations, false)
+	readElementVal(d, tags.NumberOfWarningSuboperations, &cmd.NumberOfWarningSuboperations, false)
+	readElementVal(d, tags.MessageIDBeingRespondedTo, &cmd.MessageIDBeingRespondedTo, false)
+	readElementVal(d, tags.MessageID, &cmd.MessageID, false)
+	readElementVal(d, tags.CommandGroupLength, &cmd.CommandGroupLength, false)
+
 	cmd.CommandField = Kind(kind)
+	cmd.Status = status.Status(stat)
+	cmd.Priority = Priority(priority)
 	cmd.AffectedSOPClassUID = make([]serviceobjectpair.UID, len(asopcuid))
 	for i, sop := range asopcuid {
 		cmd.AffectedSOPClassUID[i] = serviceobjectpair.UID(sop)
 	}
+	cmd.AffectedSOPInstanceUID = make([]serviceobjectpair.UID, len(asopiuid))
+	for i, sop := range asopiuid {
+		cmd.AffectedSOPInstanceUID[i] = serviceobjectpair.UID(sop)
+	}
 	cmd.CommandDataSetType = DataSetType(cdst)
-
-	if cmd.CommandField == CSTORERQ || cmd.CommandField == CMOVERQ || cmd.CommandField == CGETRQ || cmd.CommandField == CFINDRQ {
-		if err := readElementVal(d, tags.Priority, &cmd.Priority, true); err != nil {
-			return nil, err
-		}
-	}
-
-	// optional anyways
-	if err := readElementVal(d, tags.NumberOfRemainingSuboperations, &cmd.NumberOfRemainingSuboperations, false); err != nil {
-		return nil, err
-	} else if err := readElementVal(d, tags.NumberOfCompletedSuboperations, &cmd.NumberOfCompletedSuboperations, false); err != nil {
-		return nil, err
-	} else if err := readElementVal(d, tags.NumberOfFailedSuboperations, &cmd.NumberOfFailedSuboperations, false); err != nil {
-		return nil, err
-	} else if err := readElementVal(d, tags.NumberOfWarningSuboperations, &cmd.NumberOfWarningSuboperations, false); err != nil {
-		return nil, err
-	}
-
-	if cmd.CommandField == CSTORERQ {
-		if err := readElementVals(d, tags.AffectedSOPInstanceUID, &cmd.AffectedSOPInstanceUID, true); err != nil {
-			return nil, err
-		}
-	}
-
 	return cmd, nil
 }
 
@@ -187,8 +188,14 @@ func readElementVal[T any](ds dicom.Dataset, t tag.Tag, dst *T, required bool) e
 	}
 	val, ok := eval.([]T)
 	if !ok {
+		if !required {
+			return nil
+		}
 		return fmt.Errorf("element value is %T and not []%T", eval, dst)
 	} else if len(val) == 0 {
+		if !required {
+			return nil
+		}
 		return fmt.Errorf("element value empty")
 	}
 	*dst = val[0]
@@ -198,10 +205,14 @@ func readElementVal[T any](ds dicom.Dataset, t tag.Tag, dst *T, required bool) e
 func readElementVals[T any](ds dicom.Dataset, t tag.Tag, dst *T, required bool) error {
 	eval, err := findValue(ds, t, required)
 	if err != nil {
-		return err
+		info, _ := tag.Find(t)
+		return fmt.Errorf("tag: %v, %v", info.Name, err)
 	}
 	val, ok := eval.(T)
 	if !ok {
+		if !required {
+			return nil
+		}
 		return fmt.Errorf("element value is %T and not []%T", eval, dst)
 	}
 	*dst = val

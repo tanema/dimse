@@ -62,9 +62,9 @@ func (q *Query) SetPriority(p int) *Query {
 func (q *Query) Find(ctx context.Context) ([]dicom.Dataset, error) {
 	return q.client.dispatch(ctx, commands.CFINDRSP, &commands.Command{
 		CommandField:        commands.CFINDRQ,
-		AffectedSOPClassUID: []serviceobjectpair.UID{q.sopForCmd(commands.CFINDRQ)},
+		AffectedSOPClassUID: serviceobjectpair.QRFindClasses,
 		CommandDataSetType:  commands.NonNull,
-		Priority:            q.priority,
+		Priority:            commands.Priority(q.priority),
 	}, q.payload)
 }
 
@@ -72,9 +72,9 @@ func (q *Query) Find(ctx context.Context) ([]dicom.Dataset, error) {
 func (q *Query) Get(ctx context.Context) ([]dicom.Dataset, error) {
 	return q.client.dispatch(ctx, commands.CGETRSP, &commands.Command{
 		CommandField:        commands.CGETRQ,
-		AffectedSOPClassUID: []serviceobjectpair.UID{q.sopForCmd(commands.CGETRQ)},
+		AffectedSOPClassUID: serviceobjectpair.QRGetClasses,
 		CommandDataSetType:  commands.NonNull,
-		Priority:            q.priority,
+		Priority:            commands.Priority(q.priority),
 	}, q.payload)
 }
 
@@ -82,8 +82,8 @@ func (q *Query) Get(ctx context.Context) ([]dicom.Dataset, error) {
 func (q *Query) Move(ctx context.Context, dst string) ([]dicom.Dataset, error) {
 	return q.client.dispatch(ctx, commands.CMOVERSP, &commands.Command{
 		CommandField:        commands.CMOVERQ,
-		AffectedSOPClassUID: []serviceobjectpair.UID{q.sopForCmd(commands.CMOVERQ)},
-		Priority:            q.priority,
+		AffectedSOPClassUID: serviceobjectpair.QRMoveClasses,
+		Priority:            commands.Priority(q.priority),
 		MoveDestination:     dst,
 		CommandDataSetType:  commands.NonNull,
 	}, q.payload)
@@ -93,36 +93,12 @@ func (q *Query) Move(ctx context.Context, dst string) ([]dicom.Dataset, error) {
 func (q *Query) Store(ctx context.Context, inst []serviceobjectpair.UID, id int, dst, title string) ([]dicom.Dataset, error) {
 	return q.client.dispatch(ctx, commands.CSTORERSP, &commands.Command{
 		CommandField:                         commands.CSTORERQ,
-		AffectedSOPClassUID:                  []serviceobjectpair.UID{q.sopForCmd(commands.CMOVERQ)},
+		AffectedSOPClassUID:                  []serviceobjectpair.UID{},
 		CommandDataSetType:                   commands.NonNull,
-		Priority:                             q.priority,
+		Priority:                             commands.Priority(q.priority),
 		MoveDestination:                      dst,
 		AffectedSOPInstanceUID:               inst,
 		MoveOriginatorApplicationEntityTitle: title,
 		MoveOriginatorMessageID:              id,
 	}, q.payload)
-}
-
-func (q *Query) sopForCmd(kind commands.Kind) serviceobjectpair.UID {
-	switch q.level {
-	case query.Patient:
-		switch kind {
-		case commands.CFINDRQ:
-			return serviceobjectpair.PatientRootQueryRetrieveInformationModelFind
-		case commands.CGETRQ:
-			return serviceobjectpair.PatientRootQueryRetrieveInformationModelGet
-		case commands.CMOVERQ:
-			return serviceobjectpair.PatientRootQueryRetrieveInformationModelMove
-		}
-	case query.Study, query.Series:
-		switch kind {
-		case commands.CFINDRQ:
-			return serviceobjectpair.StudyRootQueryRetrieveInformationModelFind
-		case commands.CGETRQ:
-			return serviceobjectpair.StudyRootQueryRetrieveInformationModelGet
-		case commands.CMOVERQ:
-			return serviceobjectpair.StudyRootQueryRetrieveInformationModelMove
-		}
-	}
-	return ""
 }

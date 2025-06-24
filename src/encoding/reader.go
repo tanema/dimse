@@ -15,23 +15,25 @@ import (
 
 type (
 	Reader struct {
-		bo binary.ByteOrder
-		in []io.Reader
+		bo       binary.ByteOrder
+		implicit bool
+		in       []io.Reader
 	}
 	Skip int64
 )
 
-func NewReader(in io.Reader, bo binary.ByteOrder) *Reader {
+func NewReader(in io.Reader, bo binary.ByteOrder, implicit bool) *Reader {
 	return &Reader{
-		bo: bo,
-		in: []io.Reader{in},
+		bo:       bo,
+		implicit: implicit,
+		in:       []io.Reader{in},
 	}
 }
 
-func (r *Reader) Decode(implicit bool) (dicom.Dataset, error) {
+func (r *Reader) Decode() (dicom.Dataset, error) {
 	ds := dicom.Dataset{}
 	for {
-		elem, err := r.readElement(implicit)
+		elem, err := r.readElement()
 		if elem != nil {
 			ds.Elements = append(ds.Elements, elem)
 		}
@@ -78,12 +80,12 @@ func (r *Reader) String(length int) (string, error) {
 	return string(data), r.Read(&data)
 }
 
-func (r *Reader) readElement(implicit bool) (*dicom.Element, error) {
+func (r *Reader) readElement() (*dicom.Element, error) {
 	if t, err := r.readTag(); err != nil {
 		return nil, err
-	} else if vr, err := r.readRepresentation(implicit, t); err != nil {
+	} else if vr, err := r.readRepresentation(t); err != nil {
 		return nil, err
-	} else if vlength, err := r.readLength(implicit, vr); err != nil {
+	} else if vlength, err := r.readLength(vr); err != nil {
 		return nil, fmt.Errorf("readElement: error when reading VL for element %v: %w", t, err)
 	} else if val, err := r.readValue(t, vr, vlength); err != nil {
 		return nil, fmt.Errorf("readElement: error when reading Value for element %v: %w", t, err)
@@ -106,8 +108,8 @@ func (r *Reader) readTag() (tag.Tag, error) {
 	return tag.Tag{Group: group, Element: element}, nil
 }
 
-func (r *Reader) readRepresentation(implicit bool, t tag.Tag) (string, error) {
-	if implicit {
+func (r *Reader) readRepresentation(t tag.Tag) (string, error) {
+	if r.implicit {
 		if entry, err := tag.Find(t); err == nil {
 			switch entry.Tag {
 			case tag.PixelData, tag.OverlayData:
@@ -121,8 +123,8 @@ func (r *Reader) readRepresentation(implicit bool, t tag.Tag) (string, error) {
 	return r.readRawString(2)
 }
 
-func (r *Reader) readLength(implicit bool, vr string) (uint32, error) {
-	if implicit {
+func (r *Reader) readLength(vr string) (uint32, error) {
+	if r.implicit {
 		var vl uint32
 		return vl, r.Read(&vl)
 	}
@@ -153,7 +155,7 @@ func (r *Reader) readValue(t tag.Tag, vr string, vl uint32) (dicom.Value, error)
 	switch vrkind {
 	case tag.VRBytes, tag.VRFloat32List, tag.VRFloat64List, tag.VRSequence, tag.VRItem,
 		tag.VRUnknown, tag.VRPixelData:
-		return nil, fmt.Errorf("cannot read %v value", vr)
+		return nil, fmt.Errorf("read %v value unsupported right now", vr)
 	case tag.VRUInt16List, tag.VRUInt32List, tag.VRInt16List, tag.VRInt32List, tag.VRTagList:
 		return r.readInt(t, vr, vl)
 	default:

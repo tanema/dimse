@@ -14,9 +14,7 @@ type Reader struct {
 }
 
 func NewReader(in io.Reader) *Reader {
-	return &Reader{
-		reader: encoding.NewReader(in, binary.BigEndian),
-	}
+	return &Reader{reader: encoding.NewReader(in, binary.BigEndian, true)}
 }
 
 func (r *Reader) Next() (any, error) {
