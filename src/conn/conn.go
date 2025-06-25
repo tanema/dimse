@@ -21,21 +21,16 @@ import (
 
 type (
 	Conn struct {
-		ctx    context.Context
-		conn   net.Conn
-		msgID  int32
-		events chan readResult
-		cfg    Config
+		ctx   context.Context
+		conn  net.Conn
+		msgID int32
+		cfg   Config
 	}
 	Config struct {
 		MaxConnections    int
 		ConnectionTimeout time.Duration
 		ChunkSize         uint32
 		AETitle           string
-	}
-	readResult struct {
-		evt any
-		err error
 	}
 )
 
@@ -52,10 +47,9 @@ func Connect(ctx context.Context, addr string, cfg Config) (*Conn, error) {
 		return nil, err
 	}
 	return &Conn{
-		ctx:    ctx,
-		conn:   conn,
-		events: make(chan readResult),
-		cfg:    cfg,
+		ctx:  ctx,
+		conn: conn,
+		cfg:  cfg,
 	}, nil
 }
 
@@ -73,7 +67,6 @@ func (c *Conn) Send(msg any) error {
 }
 
 func (c *Conn) Close() error {
-	close(c.events)
 	return c.conn.Close()
 }
 
@@ -215,9 +208,9 @@ func (c *Conn) cstoreRsp(ctxID uint8, cmd *commands.Command) error {
 		CommandField:              commands.CSTORERSP,
 		MessageIDBeingRespondedTo: cmd.MessageID,
 		Status:                    status.Successful,
+		CommandDataSetType:        commands.Null,
 		AffectedSOPClassUID:       cmd.AffectedSOPClassUID,
 		AffectedSOPInstanceUID:    cmd.AffectedSOPInstanceUID,
-		CommandDataSetType:        commands.Null,
 	}, nil)
 }
 

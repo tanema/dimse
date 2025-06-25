@@ -70,7 +70,7 @@ func (c *Command) encode(w *dicom.Writer) error {
 	}
 	if err := writeElement(w, tags.CommandField, []int{int(c.CommandField)}); err != nil {
 		return err
-	} else if err := writeElement(w, tags.StatusTag, []int{int(status.Pending)}); err != nil {
+	} else if err := writeElement(w, tags.StatusTag, []int{int(c.Status)}); err != nil {
 		return err
 	} else if err := writeElement(w, tags.AffectedSOPClassUID, sops); err != nil {
 		return err

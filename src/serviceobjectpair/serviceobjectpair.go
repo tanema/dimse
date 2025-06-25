@@ -413,8 +413,7 @@ var (
 		XRayRadiationDoseSRStorage,
 		XRayRadiofluoroscopicImageStorage,
 	}
-	StorageCommitmentClasses       = []UID{StorageCommitmentPushModel}
-	StorageManagementClasses       = []UID{InventoryCreation}
+	StorageManagementClasses       = []UID{InventoryCreation, StorageCommitmentPushModel}
 	SubstanceAdministrationClasses = []UID{ProductCharacteristicsQuery, SubstanceApprovalQuery}
 	UnifiedProcedureStepClasses    = []UID{UnifiedProcedureStepPush, UnifiedProcedureStepWatch, UnifiedProcedureStepPull, UnifiedProcedureStepEvent, UnifiedProcedureStepQuery}
 	VerificationClasses            = []UID{Verification}

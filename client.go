@@ -1,10 +1,12 @@
 package dimse
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 
 	"github.com/suyashkumar/dicom"
+	"github.com/suyashkumar/dicom/pkg/tag"
 	"github.com/tanema/dimse/src/commands"
 	"github.com/tanema/dimse/src/conn"
 	"github.com/tanema/dimse/src/serviceobjectpair"
@@ -76,4 +78,30 @@ func (c *Client) Echo(ctx context.Context) error {
 		CommandDataSetType:  commands.Null,
 	}, nil)
 	return err
+}
+
+func (c *Client) Store(ctx context.Context, ds dicom.Dataset) ([]dicom.Dataset, error) {
+	element, err := ds.FindElementByTag(tag.SOPClassUID)
+	if err != nil {
+		return nil, fmt.Errorf("could not find datasets sop class uid: %v", err)
+	}
+	val, ok := element.Value.GetValue().([]string)
+	if !ok {
+		return nil, fmt.Errorf("datasets sop class uid is an invalid value")
+	}
+
+	sopUIDs := make([]serviceobjectpair.UID, len(val))
+	for i, uid := range val {
+		sopUIDs[i] = serviceobjectpair.UID(uid)
+	}
+
+	buf := bytes.NewBuffer([]byte{})
+	if err := dicom.Write(buf, ds); err != nil {
+		return nil, err
+	}
+	return c.dispatch(ctx, commands.CSTORERSP, &commands.Command{
+		CommandField:        commands.CSTORERQ,
+		AffectedSOPClassUID: append(sopUIDs, serviceobjectpair.StorageManagementClasses...),
+		CommandDataSetType:  commands.NonNull,
+	}, buf.Bytes())
 }

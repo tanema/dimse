@@ -88,17 +88,3 @@ func (q *Query) Move(ctx context.Context, dst string) ([]dicom.Dataset, error) {
 		CommandDataSetType:  commands.NonNull,
 	}, q.payload)
 }
-
-// Store will run a C-STORE service command on the built query
-func (q *Query) Store(ctx context.Context, inst []serviceobjectpair.UID, id int, dst, title string) ([]dicom.Dataset, error) {
-	return q.client.dispatch(ctx, commands.CSTORERSP, &commands.Command{
-		CommandField:                         commands.CSTORERQ,
-		AffectedSOPClassUID:                  []serviceobjectpair.UID{},
-		CommandDataSetType:                   commands.NonNull,
-		Priority:                             commands.Priority(q.priority),
-		MoveDestination:                      dst,
-		AffectedSOPInstanceUID:               inst,
-		MoveOriginatorApplicationEntityTitle: title,
-		MoveOriginatorMessageID:              id,
-	}, q.payload)
-}
