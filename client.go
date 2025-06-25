@@ -12,50 +12,51 @@ import (
 	"github.com/tanema/dimse/src/serviceobjectpair"
 )
 
-type (
-	// Client is the object that will interact with the PACs
-	Client struct {
-		cfg  ClientConfig
-		pool *conn.Pool
-	}
-	// ClientConfig allows for configuring how the client connects to PACS
-	ClientConfig struct {
-		Conn conn.Config
-	}
-)
-
-// DefaultConfig is the fallback config for new Clients
-var DefaultConfig = &ClientConfig{
-	Conn: *conn.DefaultConfig,
+// Client is the object that will interact with the PACs
+type Client struct {
+	cfg  Config
+	pool *conn.Pool
 }
 
 // NewClient will create a new client for interacting with a PACs
-func NewClient(addr string, cfg *ClientConfig) *Client {
-	if cfg == nil {
-		cfg = DefaultConfig
-	}
+func NewClient(cfg Config) (*Client, error) {
 	return &Client{
-		cfg:  *cfg,
-		pool: conn.NewPool(addr, cfg.Conn),
-	}
+		cfg:  cfg,
+		pool: conn.NewPool(cfg.AETitle, cfg.Conn),
+	}, cfg.Validate()
 }
 
-func (c *Client) dispatch(ctx context.Context, expected commands.Kind, cmd *commands.Command, payload []byte) ([]dicom.Dataset, error) {
+func (c *Client) dispatch(ctx context.Context, entity conn.Entity, cmd *commands.Command, payload []byte) ([]dicom.Dataset, error) {
+	// Check if already cancelled
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	if cmd.CommandDataSetType != commands.Null && len(payload) == 0 {
 		return nil, fmt.Errorf("empty payload provided to a command that requires a payload")
 	}
-	conn, err := c.pool.Aquire(ctx)
+	conn, err := c.pool.Aquire(ctx, entity)
 	if err != nil {
 		return nil, err
 	}
 	defer c.pool.Release(conn)
+
+	// Check if cancelled
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	ctxMan, err := conn.Associate(cmd.AffectedSOPClassUID, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	respCmd, data, err := conn.Pdata(ctxMan, cmd, payload)
+	// Check if cancelled
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	respCmd, data, err := conn.Pdata(ctx, ctxMan, cmd, payload)
 	if err != nil {
 		conn.Abort()
 		return nil, err
@@ -63,16 +64,14 @@ func (c *Client) dispatch(ctx context.Context, expected commands.Kind, cmd *comm
 		return nil, err
 	} else if cmd.MessageID != respCmd.MessageIDBeingRespondedTo {
 		return nil, fmt.Errorf("received %v message id but sent %v", cmd.MessageID, respCmd.MessageID)
-	} else if respCmd.CommandField != expected {
-		return nil, fmt.Errorf("received %s in response to %s", expected, cmd.CommandField)
 	}
 	return data, nil
 }
 
 // Echo will issue an echo command and will return an error if something went wrong.
 // No error will be returned if the error command returned successfully.
-func (c *Client) Echo(ctx context.Context) error {
-	_, err := c.dispatch(ctx, commands.CECHORSP, &commands.Command{
+func (c *Client) Echo(ctx context.Context, entity conn.Entity) error {
+	_, err := c.dispatch(ctx, entity, &commands.Command{
 		CommandField:        commands.CECHORQ,
 		AffectedSOPClassUID: serviceobjectpair.VerificationClasses,
 		CommandDataSetType:  commands.Null,
@@ -80,7 +79,7 @@ func (c *Client) Echo(ctx context.Context) error {
 	return err
 }
 
-func (c *Client) Store(ctx context.Context, ds dicom.Dataset) ([]dicom.Dataset, error) {
+func (c *Client) Store(ctx context.Context, entity conn.Entity, ds dicom.Dataset) ([]dicom.Dataset, error) {
 	element, err := ds.FindElementByTag(tag.SOPClassUID)
 	if err != nil {
 		return nil, fmt.Errorf("could not find datasets sop class uid: %v", err)
@@ -99,7 +98,7 @@ func (c *Client) Store(ctx context.Context, ds dicom.Dataset) ([]dicom.Dataset, 
 	if err := dicom.Write(buf, ds); err != nil {
 		return nil, err
 	}
-	return c.dispatch(ctx, commands.CSTORERSP, &commands.Command{
+	return c.dispatch(ctx, entity, &commands.Command{
 		CommandField:        commands.CSTORERQ,
 		AffectedSOPClassUID: append(sopUIDs, serviceobjectpair.StorageManagementClasses...),
 		CommandDataSetType:  commands.NonNull,

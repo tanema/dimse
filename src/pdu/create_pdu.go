@@ -5,12 +5,12 @@ import (
 	"github.com/tanema/dimse/src/transfersyntax"
 )
 
-func CreateAssoc(aetitle string, chunkSize uint32, sopsClasses []serviceobjectpair.UID, transfersyntaxes []transfersyntax.UID) (*AAssociate, *ContextManager) {
+func CreateAssoc(localTitle, remoteTitle string, chunkSize uint32, sopsClasses []serviceobjectpair.UID, transfersyntaxes []transfersyntax.UID) (*AAssociate, *ContextManager) {
 	assoc := &AAssociate{
 		Type:            TypeAAssociateRq,
 		ProtocolVersion: CurrentProtocolVersion,
-		CalledAETitle:   "anon-called-ae",
-		CallingAETitle:  aetitle,
+		CallingAETitle:  localTitle,
+		CalledAETitle:   remoteTitle,
 		Items:           []any{ApplicationContextItem{Name: DICOMApplicationContextItemName}},
 	}
 

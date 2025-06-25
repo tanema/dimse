@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net"
 	"sync/atomic"
-	"time"
 
 	"github.com/suyashkumar/dicom"
 
@@ -19,37 +18,27 @@ import (
 	"github.com/tanema/dimse/src/transfersyntax"
 )
 
-type (
-	Conn struct {
-		ctx   context.Context
-		conn  net.Conn
-		msgID int32
-		cfg   Config
-	}
-	Config struct {
-		MaxConnections    int
-		ConnectionTimeout time.Duration
-		ChunkSize         uint32
-		AETitle           string
-	}
-)
-
-var DefaultConfig = &Config{
-	MaxConnections:    10,
-	ConnectionTimeout: time.Second,
-	ChunkSize:         pdu.DefaultMaxPDUSize,
-	AETitle:           "anon-ae",
+type Conn struct {
+	ctx     context.Context
+	conn    net.Conn
+	msgID   int32
+	aeTitle string
+	entity  *Entity
+	cfg     *Config
 }
 
-func Connect(ctx context.Context, addr string, cfg Config) (*Conn, error) {
+func Connect(ctx context.Context, aetitle string, entity Entity, cfg *Config) (*Conn, error) {
+	addr := fmt.Sprintf("%v:%v", entity.Host, entity.Port)
 	conn, err := net.DialTimeout("tcp", addr, cfg.ConnectionTimeout)
 	if err != nil {
 		return nil, err
 	}
 	return &Conn{
-		ctx:  ctx,
-		conn: conn,
-		cfg:  cfg,
+		aeTitle: aetitle,
+		entity:  &entity,
+		ctx:     ctx,
+		conn:    conn,
+		cfg:     cfg,
 	}, nil
 }
 
@@ -75,7 +64,7 @@ func (c *Conn) Associate(sopsClasses []serviceobjectpair.UID, transfersyntaxes [
 		transfersyntaxes = transfersyntax.StandardSyntaxes
 	}
 
-	assocPDI, ctxManager := pdu.CreateAssoc(c.cfg.AETitle, c.cfg.ChunkSize, sopsClasses, transfersyntaxes)
+	assocPDI, ctxManager := pdu.CreateAssoc(c.aeTitle, c.entity.Title, c.cfg.ChunkSize, sopsClasses, transfersyntaxes)
 	if err := c.Send(assocPDI); err != nil {
 		return nil, err
 	}
@@ -119,7 +108,7 @@ func (c *Conn) Realease() error {
 
 func (c *Conn) Abort() { c.Send(pdu.CreateAbort()) }
 
-func (c *Conn) Pdata(ctxMan *pdu.ContextManager, cmd *commands.Command, payload []byte) (*commands.Command, []dicom.Dataset, error) {
+func (c *Conn) Pdata(ctx context.Context, ctxMan *pdu.ContextManager, cmd *commands.Command, payload []byte) (*commands.Command, []dicom.Dataset, error) {
 	ctxID, ts, err := ctxMan.GetAccepted(cmd.AffectedSOPClassUID...)
 	if err != nil {
 		return nil, nil, err
@@ -130,7 +119,11 @@ func (c *Conn) Pdata(ctxMan *pdu.ContextManager, cmd *commands.Command, payload 
 	allDataSets := []dicom.Dataset{}
 	bo, implicit := transfersyntax.Info(ts)
 	for {
-		cmd, ds, err := c.readPData(ts, ctxID, bo, implicit)
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+
+		cmd, ds, err := c.readPData(ctx, ts, ctxID, bo, implicit)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -149,11 +142,15 @@ func (c *Conn) Pdata(ctxMan *pdu.ContextManager, cmd *commands.Command, payload 
 	}
 }
 
-func (c *Conn) readPData(ts transfersyntax.UID, ctxID uint8, bo binary.ByteOrder, implicit bool) (*commands.Command, []dicom.Dataset, error) {
+func (c *Conn) readPData(ctx context.Context, ts transfersyntax.UID, ctxID uint8, bo binary.ByteOrder, implicit bool) (*commands.Command, []dicom.Dataset, error) {
 	var cmd *commands.Command
 	sets := []dicom.Dataset{}
 	buffer := []byte{}
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+
 		evt, err := c.Read()
 		if err != nil {
 			return nil, nil, err

@@ -9,16 +9,17 @@ import (
 // them alive however because dimse connections are closed after the association
 // is released.
 type Pool struct {
-	addr     string
-	cfg      Config
+	aetitle  string
+	cfg      *Config
 	timeout  time.Duration
 	resource chan int
 }
 
-func NewPool(addr string, cfg Config) *Pool {
+func NewPool(aetitle string, cfg Config) *Pool {
+	cfg.Validate()
 	p := &Pool{
-		addr:     addr,
-		cfg:      cfg,
+		aetitle:  aetitle,
+		cfg:      &cfg,
 		resource: make(chan int, cfg.MaxConnections),
 	}
 	for range cfg.MaxConnections {
@@ -27,9 +28,9 @@ func NewPool(addr string, cfg Config) *Pool {
 	return p
 }
 
-func (p *Pool) Aquire(ctx context.Context) (*Conn, error) {
+func (p *Pool) Aquire(ctx context.Context, ent Entity) (*Conn, error) {
 	<-p.resource
-	return Connect(ctx, p.addr, p.cfg)
+	return Connect(ctx, p.aetitle, ent, p.cfg)
 }
 
 func (p *Pool) Release(con *Conn) error {
