@@ -1,5 +1,13 @@
 package pdu
 
+import (
+	"github.com/tanema/dimse/src/defn/abort"
+	"github.com/tanema/dimse/src/defn/item"
+	"github.com/tanema/dimse/src/defn/presentationctx"
+	"github.com/tanema/dimse/src/defn/reject"
+	"github.com/tanema/dimse/src/defn/source"
+)
+
 type (
 	AAssociate struct {
 		Type            Type
@@ -30,21 +38,21 @@ type (
 	AbstractSyntaxSubItem            struct{ Name string }
 	TransferSyntaxSubItem            struct{ Name string }
 	PresentationContextItem          struct {
-		Type      ItemType
+		Type      item.Type
 		ContextID uint8
-		Result    PresentationContextResult
+		Result    presentationctx.Result
 		Items     []any
 	}
 	AReleaseRq   struct{}
 	AReleaseRp   struct{}
 	AAssociateRj struct {
-		Result RejectResultType
-		Source SourceType
-		Reason RejectReasonType
+		Result reject.Result
+		Source source.Type
+		Reason reject.Reason
 	}
 	AAbort struct {
-		Source SourceType
-		Reason AbortReasonType
+		Source source.Type
+		Reason abort.Reason
 	}
 	PDataTf struct {
 		Items []PresentationDataValueItem

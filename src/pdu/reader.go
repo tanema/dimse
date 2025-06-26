@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/tanema/dimse/src/defn/item"
 	"github.com/tanema/dimse/src/encoding"
 )
 
@@ -98,41 +99,41 @@ func (r *Reader) pdu(pduType Type, length int) (any, error) {
 }
 
 func (r *Reader) decodeSubItem() (any, error) {
-	var itemType ItemType
+	var itemType item.Type
 	var length uint16
 	if err := r.reader.Read(&itemType, encoding.Skip(1), &length); err != nil {
 		return nil, err
 	}
 
 	switch itemType {
-	case ItemTypeApplicationContext:
+	case item.ApplicationContext:
 		name, err := r.reader.String(int(length))
 		return &ApplicationContextItem{Name: name}, err
-	case ItemTypeAbstractSyntax:
+	case item.AbstractSyntax:
 		name, err := r.reader.String(int(length))
 		return &AbstractSyntaxSubItem{Name: name}, err
-	case ItemTypeTransferSyntax:
+	case item.TransferSyntax:
 		name, err := r.reader.String(int(length))
 		return &TransferSyntaxSubItem{Name: name}, err
-	case ItemTypeImplementationClassUID:
+	case item.ImplementationClassUID:
 		name, err := r.reader.String(int(length))
 		return &ImplementationClassUIDSubItem{Name: name}, err
-	case ItemTypeImplementationVersionName:
+	case item.ImplementationVersionName:
 		name, err := r.reader.String(int(length))
 		return &ImplementationVersionNameSubItem{Name: name}, err
-	case ItemTypeUserInformationMaximumLength:
+	case item.UserInformationMaximumLength:
 		if length != 4 {
 			return nil, fmt.Errorf("UserInformationMaximumLengthItem must be 4 bytes, but found %dB", length)
 		}
 		var maxLen uint32
 		return &UserInformationMaximumLengthItem{MaximumLengthReceived: maxLen}, r.reader.Read(&maxLen)
-	case ItemTypeAsynchronousOperationsWindow:
+	case item.AsynchronousOperationsWindow:
 		var maxOpsInv, maxOpsPerf uint16
 		if err := r.reader.Read(&maxOpsInv); err != nil {
 			return nil, err
 		}
 		return &AsynchronousOperationsWindowSubItem{MaxOpsInvoked: maxOpsInv, MaxOpsPerformed: maxOpsPerf}, r.reader.Read(&maxOpsPerf)
-	case ItemTypeRoleSelection:
+	case item.RoleSelection:
 		var uidLen uint16
 		var scuRole, scpRole byte
 		if err := r.reader.Read(&uidLen); err != nil {
@@ -143,7 +144,7 @@ func (r *Reader) decodeSubItem() (any, error) {
 			return nil, err
 		}
 		return &RoleSelectionSubItem{SOPClassUID: sopClassUID, SCURole: scuRole, SCPRole: scpRole}, r.reader.Read(&scuRole, &scpRole)
-	case ItemTypePresentationContextRequest, ItemTypePresentationContextResponse:
+	case item.PresentationContextRequest, item.PresentationContextResponse:
 		v := &PresentationContextItem{Type: itemType}
 		r.reader.PushLimit(int(length))
 		defer r.reader.PopLimit()
@@ -162,7 +163,7 @@ func (r *Reader) decodeSubItem() (any, error) {
 			}
 			v.Items = append(v.Items, item)
 		}
-	case ItemTypeUserInformation:
+	case item.UserInformation:
 		v := &UserInformationItem{}
 		r.reader.PushLimit(int(length))
 		defer r.reader.PopLimit()

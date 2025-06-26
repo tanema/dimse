@@ -1,8 +1,10 @@
 package pdu
 
 import (
-	"github.com/tanema/dimse/src/serviceobjectpair"
-	"github.com/tanema/dimse/src/transfersyntax"
+	"github.com/tanema/dimse/src/defn/abort"
+	"github.com/tanema/dimse/src/defn/serviceobjectpair"
+	"github.com/tanema/dimse/src/defn/source"
+	"github.com/tanema/dimse/src/defn/transfersyntax"
 )
 
 func CreateAssoc(localTitle, remoteTitle string, chunkSize uint32, sopsClasses []serviceobjectpair.UID, transfersyntaxes []transfersyntax.UID) (*AAssociate, *ContextManager) {
@@ -36,8 +38,8 @@ func CreateRelease() *AReleaseRq {
 
 func CreateAbort() *AAbort {
 	return &AAbort{
-		Source: SourceULServiceUser,
-		Reason: AbortReasonNotSpecified,
+		Source: source.ServiceUser,
+		Reason: abort.NotSpecified,
 	}
 }
 

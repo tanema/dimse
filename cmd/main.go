@@ -7,14 +7,16 @@ import (
 
 	"github.com/suyashkumar/dicom"
 	"github.com/suyashkumar/dicom/pkg/tag"
+
 	"github.com/tanema/dimse"
-	"github.com/tanema/dimse/src/conn"
-	"github.com/tanema/dimse/src/query"
+	"github.com/tanema/dimse/src/defn/query"
 )
 
-type action func(context.Context, *sync.WaitGroup, *dimse.Client, conn.Entity)
+type action func(context.Context, *sync.WaitGroup, *dimse.Client)
 
-const AETitle = "golang_dimse"
+const AETitle = "golang-dimse"
+
+var TestAE = dimse.Entity{Title: "test-serv", Host: "www.dicomserver.co.uk", Port: 104}
 
 func checkErr(scope string, err error) {
 	if err != nil {
@@ -24,30 +26,30 @@ func checkErr(scope string, err error) {
 }
 
 func main() {
-	spe := conn.Entity{Title: "test-serv", Host: "www.dicomserver.co.uk", Port: 104}
-	cfg := dimse.Config{AETitle: "GolangClient"}
-
-	client, err := dimse.NewClient(cfg)
+	client, err := dimse.NewClient(dimse.Config{AETitle: AETitle})
 	checkErr("new client", err)
+	defer client.Close()
+
 	ctx := context.Background()
 	var wg sync.WaitGroup
+	//acts := []action{echo, find, get, move, store}
 	acts := []action{echo, find, get}
 	for _, act := range acts {
 		wg.Add(1)
-		act(ctx, &wg, client, spe)
+		go act(ctx, &wg, client)
 	}
 	wg.Wait()
 }
 
-func echo(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client, entity conn.Entity) {
+func echo(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client) {
 	defer wg.Done()
-	checkErr("echo", client.Echo(ctx, entity))
+	checkErr("echo", client.Echo(ctx, TestAE))
 }
 
-func find(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client, entity conn.Entity) {
+func find(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client) {
 	defer wg.Done()
 	q, err := client.Query(
-		entity,
+		TestAE,
 		query.Study,
 		[]*dicom.Element{
 			newElem(tag.UID, []string{"*"}),
@@ -63,10 +65,10 @@ func find(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client, entity 
 	printResp("C-FIND", data)
 }
 
-func get(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client, entity conn.Entity) {
+func get(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client) {
 	defer wg.Done()
 	q, err := client.Query(
-		entity,
+		TestAE,
 		query.Patient,
 		[]*dicom.Element{
 			newElem(tag.PatientID, []string{"N8V08W1E6N7C"}),
@@ -78,10 +80,10 @@ func get(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client, entity c
 	printResp("C-GET", data)
 }
 
-func move(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client, entity conn.Entity) {
+func move(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client) {
 	defer wg.Done()
 	q, err := client.Query(
-		entity,
+		TestAE,
 		query.Patient,
 		[]*dicom.Element{
 			newElem(tag.PatientID, []string{"N8V08W1E6N7C"}),
@@ -91,6 +93,13 @@ func move(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client, entity 
 	data, err := q.Move(ctx, AETitle)
 	checkErr("move", err)
 	printResp("C-GET", data)
+}
+
+func store(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client) {
+	defer wg.Done()
+	ds, err := dicom.ParseFile("./data/example.dcm", nil)
+	checkErr("parsing dicom", err)
+	checkErr("store", client.Store(ctx, TestAE, ds))
 }
 
 func printResp(label string, d []dicom.Dataset) {

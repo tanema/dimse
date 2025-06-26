@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/tanema/dimse/src/defn/item"
 	"github.com/tanema/dimse/src/encoding"
 )
 
@@ -54,12 +55,11 @@ func EncodePDU(pdu any) ([]byte, error) {
 		pduType = TypeAAbort
 		err = enc.Write(encoding.Skip(2), &n.Source, &n.Reason)
 	default:
-		panic(fmt.Sprintf("Unknown PDU %v", pdu))
+		return nil, fmt.Errorf("Unknown PDU %v", pdu)
 	}
 	if err != nil {
 		return nil, err
 	}
-
 	var header [6]byte // First 6 bytes of buf.
 	header[0] = uint8(pduType)
 	header[1] = 0 // Reserved.
@@ -67,26 +67,26 @@ func EncodePDU(pdu any) ([]byte, error) {
 	return append(header[:], enc.Bytes()...), nil
 }
 
-func writeSubItem(w *encoding.Writer, item any) error {
-	switch val := item.(type) {
+func writeSubItem(w *encoding.Writer, i any) error {
+	switch val := i.(type) {
 	case UserInformationMaximumLengthItem:
-		return w.Write(ItemTypeUserInformationMaximumLength, encoding.Skip(1), uint16(4), val.MaximumLengthReceived)
+		return w.Write(item.UserInformationMaximumLength, encoding.Skip(1), uint16(4), val.MaximumLengthReceived)
 	case AsynchronousOperationsWindowSubItem:
-		return w.Write(ItemTypeAsynchronousOperationsWindow, encoding.Skip(1), uint16(4), val.MaxOpsPerformed, val.MaxOpsInvoked)
+		return w.Write(item.AsynchronousOperationsWindow, encoding.Skip(1), uint16(4), val.MaxOpsPerformed, val.MaxOpsInvoked)
 	case RoleSelectionSubItem:
-		return w.Write(ItemTypeRoleSelection, encoding.Skip(1), uint16(2+len(val.SOPClassUID)+1*2), uint16(len(val.SOPClassUID)), val.SCURole, val.SCPRole)
+		return w.Write(item.RoleSelection, encoding.Skip(1), uint16(2+len(val.SOPClassUID)+1*2), uint16(len(val.SOPClassUID)), val.SCURole, val.SCPRole)
 	case SubItemUnsupported:
-		return encSubItemWithName(w, ItemType(val.Type), string(val.Data))
+		return encSubItemWithName(w, item.Type(val.Type), string(val.Data))
 	case ImplementationClassUIDSubItem:
-		return encSubItemWithName(w, ItemTypeImplementationClassUID, val.Name)
+		return encSubItemWithName(w, item.ImplementationClassUID, val.Name)
 	case ImplementationVersionNameSubItem:
-		return encSubItemWithName(w, ItemTypeImplementationVersionName, val.Name)
+		return encSubItemWithName(w, item.ImplementationVersionName, val.Name)
 	case ApplicationContextItem:
-		return encSubItemWithName(w, ItemTypeApplicationContext, val.Name)
+		return encSubItemWithName(w, item.ApplicationContext, val.Name)
 	case AbstractSyntaxSubItem:
-		return encSubItemWithName(w, ItemTypeAbstractSyntax, val.Name)
+		return encSubItemWithName(w, item.AbstractSyntax, val.Name)
 	case TransferSyntaxSubItem:
-		return encSubItemWithName(w, ItemTypeTransferSyntax, val.Name)
+		return encSubItemWithName(w, item.TransferSyntax, val.Name)
 	case UserInformationItem:
 		enc := encoding.NewWriter(binary.BigEndian)
 		for _, s := range val.Items {
@@ -94,7 +94,7 @@ func writeSubItem(w *encoding.Writer, item any) error {
 				return err
 			}
 		}
-		return w.Write(ItemTypeUserInformation, encoding.Skip(1), uint16(enc.Len()), enc.Bytes())
+		return w.Write(item.UserInformation, encoding.Skip(1), uint16(enc.Len()), enc.Bytes())
 	case PresentationContextItem:
 		enc := encoding.NewWriter(binary.BigEndian)
 		for _, s := range val.Items {
@@ -113,11 +113,11 @@ func writeSubItem(w *encoding.Writer, item any) error {
 		}
 		return w.Write(uint32(2+len(val.Value)), val.ContextID, header, val.Value)
 	default:
-		return fmt.Errorf("cannot write sub item type %T", item)
+		return fmt.Errorf("cannot write sub item type %T", i)
 	}
 }
 
-func encSubItemWithName(w *encoding.Writer, itemType ItemType, name string) error {
+func encSubItemWithName(w *encoding.Writer, itemType item.Type, name string) error {
 	return w.Write(itemType, encoding.Skip(1), uint16(len(name)), []byte(name))
 }
 

@@ -9,11 +9,11 @@ import (
 	"github.com/suyashkumar/dicom"
 	"github.com/suyashkumar/dicom/pkg/tag"
 
+	"github.com/tanema/dimse/src/defn/serviceobjectpair"
+	"github.com/tanema/dimse/src/defn/status"
+	"github.com/tanema/dimse/src/defn/tags"
+	"github.com/tanema/dimse/src/defn/transfersyntax"
 	"github.com/tanema/dimse/src/encoding"
-	"github.com/tanema/dimse/src/serviceobjectpair"
-	"github.com/tanema/dimse/src/status"
-	"github.com/tanema/dimse/src/tags"
-	"github.com/tanema/dimse/src/transfersyntax"
 )
 
 type (
@@ -23,7 +23,7 @@ type (
 		AffectedSOPClassUID                  []serviceobjectpair.UID
 		MessageID                            int
 		MessageIDBeingRespondedTo            int
-		CommandDataSetType                   DataSetType
+		HasData                              bool
 		Status                               status.Status
 		ErrorComment                         string
 		Priority                             Priority
@@ -44,7 +44,7 @@ func (c *Command) String() string {
 		c.CommandField,
 		c.MessageID,
 		c.Status,
-		c.CommandDataSetType != Null,
+		c.HasData,
 		c.ErrorComment,
 		c.Priority,
 	)
@@ -68,6 +68,12 @@ func (c *Command) encode(w *dicom.Writer) error {
 	for _, s := range c.AffectedSOPClassUID {
 		sops = append(sops, string(s))
 	}
+
+	dst := Null
+	if c.HasData {
+		dst = NonNull
+	}
+
 	if err := writeElement(w, tags.CommandField, []int{int(c.CommandField)}); err != nil {
 		return err
 	} else if err := writeElement(w, tags.StatusTag, []int{int(c.Status)}); err != nil {
@@ -78,7 +84,7 @@ func (c *Command) encode(w *dicom.Writer) error {
 		return err
 	} else if err := writeElement(w, tags.MessageIDBeingRespondedTo, []int{c.MessageIDBeingRespondedTo}); err != nil {
 		return err
-	} else if err := writeElement(w, tags.CommandDataSetType, []int{int(c.CommandDataSetType)}); err != nil {
+	} else if err := writeElement(w, tags.CommandDataSetType, []int{int(dst)}); err != nil {
 		return err
 	}
 
@@ -158,7 +164,9 @@ func Decode(data []byte, ts transfersyntax.UID) (*Command, error) {
 	for i, sop := range asopiuid {
 		cmd.AffectedSOPInstanceUID[i] = serviceobjectpair.UID(sop)
 	}
-	cmd.CommandDataSetType = DataSetType(cdst)
+	if DataSetType(cdst) != Null {
+		cmd.HasData = true
+	}
 	return cmd, nil
 }
 

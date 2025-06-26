@@ -1,4 +1,4 @@
-package conn
+package dimse
 
 import (
 	"bytes"
@@ -11,32 +11,33 @@ import (
 	"github.com/suyashkumar/dicom"
 
 	"github.com/tanema/dimse/src/commands"
+	"github.com/tanema/dimse/src/defn/presentationctx"
+	"github.com/tanema/dimse/src/defn/serviceobjectpair"
+	"github.com/tanema/dimse/src/defn/status"
+	"github.com/tanema/dimse/src/defn/transfersyntax"
 	"github.com/tanema/dimse/src/encoding"
 	"github.com/tanema/dimse/src/pdu"
-	"github.com/tanema/dimse/src/serviceobjectpair"
-	"github.com/tanema/dimse/src/status"
-	"github.com/tanema/dimse/src/transfersyntax"
 )
 
 type Conn struct {
-	ctx     context.Context
-	conn    net.Conn
-	msgID   int32
-	aeTitle string
-	entity  *Entity
-	cfg     *Config
+	conn       net.Conn
+	msgID      int32
+	aeTitle    string
+	entity     *Entity
+	cfg        *ConnectionConfig
+	ctxManager *pdu.ContextManager
 }
 
-func Connect(ctx context.Context, aetitle string, entity Entity, cfg *Config) (*Conn, error) {
+func Connect(ctx context.Context, aetitle string, entity Entity, cfg *ConnectionConfig) (*Conn, error) {
 	addr := fmt.Sprintf("%v:%v", entity.Host, entity.Port)
-	conn, err := net.DialTimeout("tcp", addr, cfg.ConnectionTimeout)
+	dialer := net.Dialer{Timeout: cfg.Timeout}
+	conn, err := dialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
 	}
 	return &Conn{
 		aeTitle: aetitle,
 		entity:  &entity,
-		ctx:     ctx,
 		conn:    conn,
 		cfg:     cfg,
 	}, nil
@@ -59,34 +60,31 @@ func (c *Conn) Close() error {
 	return c.conn.Close()
 }
 
-func (c *Conn) Associate(sopsClasses []serviceobjectpair.UID, transfersyntaxes []transfersyntax.UID) (*pdu.ContextManager, error) {
-	if len(transfersyntaxes) == 0 {
-		transfersyntaxes = transfersyntax.StandardSyntaxes
-	}
-
-	assocPDI, ctxManager := pdu.CreateAssoc(c.aeTitle, c.entity.Title, c.cfg.ChunkSize, sopsClasses, transfersyntaxes)
+func (c *Conn) Associate(sopsClasses []serviceobjectpair.UID, ts []transfersyntax.UID) error {
+	assocPDI, ctxManager := pdu.CreateAssoc(c.aeTitle, c.entity.Title, c.cfg.ChunkSize, sopsClasses, ts)
 	if err := c.Send(assocPDI); err != nil {
-		return nil, err
+		return err
 	}
 	evt, err := c.Read()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	switch pt := evt.(type) {
 	case *pdu.AAssociate:
 		for _, item := range pt.Items {
-			if pcu, ok := item.(*pdu.PresentationContextItem); ok && pcu.Result == pdu.PresentationContextAccepted {
+			if pcu, ok := item.(*pdu.PresentationContextItem); ok && pcu.Result == presentationctx.Accepted {
 				ts := pcu.Items[0].(*pdu.TransferSyntaxSubItem)
 				ctxManager.Accept(pcu.ContextID, transfersyntax.UID(ts.Name))
 			}
 		}
-		return ctxManager, nil
+		c.ctxManager = ctxManager
+		return nil
 	case *pdu.AAssociateRj:
-		return nil, fmt.Errorf("association rejected source: %s reason: %s", pt.Source, pt.Reason)
+		return fmt.Errorf("association rejected source: %s reason: %s", pt.Source, pt.Reason)
 	case *pdu.AAbort:
-		return nil, fmt.Errorf("association aborted source: %s reason: %s", pt.Source, pt.Reason)
+		return fmt.Errorf("association aborted source: %s reason: %s", pt.Source, pt.Reason)
 	default:
-		return nil, fmt.Errorf("unexpected message %T after sending associate", evt)
+		return fmt.Errorf("unexpected message %T after sending associate", evt)
 	}
 }
 
@@ -108,28 +106,25 @@ func (c *Conn) Realease() error {
 
 func (c *Conn) Abort() { c.Send(pdu.CreateAbort()) }
 
-func (c *Conn) Pdata(ctx context.Context, ctxMan *pdu.ContextManager, cmd *commands.Command, payload []byte) (*commands.Command, []dicom.Dataset, error) {
-	ctxID, ts, err := ctxMan.GetAccepted(cmd.AffectedSOPClassUID...)
+func (c *Conn) Pdata(cmd *commands.Command, ds *dicom.Dataset) (*commands.Command, []dicom.Dataset, error) {
+	ctxID, ts, err := c.ctxManager.GetAccepted(cmd.AffectedSOPClassUID...)
 	if err != nil {
 		return nil, nil, err
-	} else if err := c.sendCmd(ctxID, cmd, payload); err != nil {
+	} else if err := c.sendCmd(ctxID, cmd, ts, ds); err != nil {
 		return nil, nil, err
 	}
 
 	allDataSets := []dicom.Dataset{}
 	bo, implicit := transfersyntax.Info(ts)
 	for {
-		if err := ctx.Err(); err != nil {
-			return nil, nil, err
-		}
-
-		cmd, ds, err := c.readPData(ctx, ts, ctxID, bo, implicit)
+		cmd, ds, err := c.readPData(ts, ctxID, bo, implicit)
 		if err != nil {
 			return nil, nil, err
 		}
 		allDataSets = append(allDataSets, ds...)
 		switch cmd.Status {
 		case status.Pending:
+			continue
 		case status.Successful:
 			return cmd, allDataSets, nil
 		default:
@@ -142,15 +137,11 @@ func (c *Conn) Pdata(ctx context.Context, ctxMan *pdu.ContextManager, cmd *comma
 	}
 }
 
-func (c *Conn) readPData(ctx context.Context, ts transfersyntax.UID, ctxID uint8, bo binary.ByteOrder, implicit bool) (*commands.Command, []dicom.Dataset, error) {
+func (c *Conn) readPData(ts transfersyntax.UID, ctxID uint8, bo binary.ByteOrder, implicit bool) (*commands.Command, []dicom.Dataset, error) {
 	var cmd *commands.Command
 	sets := []dicom.Dataset{}
 	buffer := []byte{}
 	for {
-		if err := ctx.Err(); err != nil {
-			return nil, nil, err
-		}
-
 		evt, err := c.Read()
 		if err != nil {
 			return nil, nil, err
@@ -161,14 +152,14 @@ func (c *Conn) readPData(ctx context.Context, ts transfersyntax.UID, ctxID uint8
 				if item.Command {
 					if cmd, err = commands.Decode(item.Value, ts); err != nil {
 						return nil, nil, err
-					} else if cmd.CommandDataSetType == commands.Null {
+					} else if !cmd.HasData {
 						return cmd, sets, nil
 					}
 					continue
 				}
 
 				switch cmd.CommandField {
-				case commands.CFINDRSP, commands.CGETRSP:
+				case commands.CFINDRSP, commands.CGETRSP, commands.CMOVERSP:
 					payload, err := encoding.NewReader(bytes.NewBuffer(item.Value), bo, implicit).Decode()
 					if err != nil {
 						return nil, nil, err
@@ -205,14 +196,15 @@ func (c *Conn) cstoreRsp(ctxID uint8, cmd *commands.Command) error {
 		CommandField:              commands.CSTORERSP,
 		MessageIDBeingRespondedTo: cmd.MessageID,
 		Status:                    status.Successful,
-		CommandDataSetType:        commands.Null,
 		AffectedSOPClassUID:       cmd.AffectedSOPClassUID,
 		AffectedSOPInstanceUID:    cmd.AffectedSOPInstanceUID,
-	}, nil)
+	}, transfersyntax.ImplicitVRLittleEndian, nil)
 }
 
-func (c *Conn) sendCmd(ctxID uint8, cmd *commands.Command, payload []byte) error {
+func (c *Conn) sendCmd(ctxID uint8, cmd *commands.Command, ts transfersyntax.UID, ds *dicom.Dataset) error {
 	cmd.MessageID = int(atomic.AddInt32(&c.msgID, 1))
+	cmd.HasData = ds != nil
+
 	value, err := commands.Encode(cmd, transfersyntax.ImplicitVRLittleEndian)
 	if err != nil {
 		return err
@@ -220,8 +212,21 @@ func (c *Conn) sendCmd(ctxID uint8, cmd *commands.Command, payload []byte) error
 
 	// encode the command first and then send data along
 	pdatas := pdu.CreatePdata(ctxID, true, value)
-	if cmd.CommandDataSetType != commands.Null {
-		pdatas = append(pdatas, pdu.CreatePdata(ctxID, false, payload)...)
+	if ds != nil {
+		buf := bytes.NewBuffer([]byte{})
+		writer, err := dicom.NewWriter(buf)
+		if err != nil {
+			return err
+		}
+		writer.SetTransferSyntax(transfersyntax.Info(ts))
+
+		for _, elem := range ds.Elements {
+			if err := writer.WriteElement(elem); err != nil {
+				return err
+			}
+		}
+
+		pdatas = append(pdatas, pdu.CreatePdata(ctxID, false, buf.Bytes())...)
 	}
 
 	for _, pd := range pdatas {

@@ -1,62 +1,99 @@
 package dimse
 
 import (
-	"bytes"
 	"context"
 	"fmt"
+	"net"
 
 	"github.com/suyashkumar/dicom"
 	"github.com/suyashkumar/dicom/pkg/tag"
+
 	"github.com/tanema/dimse/src/commands"
-	"github.com/tanema/dimse/src/conn"
-	"github.com/tanema/dimse/src/serviceobjectpair"
+	"github.com/tanema/dimse/src/defn/serviceobjectpair"
+	"github.com/tanema/dimse/src/defn/transfersyntax"
+	"github.com/tanema/dimse/src/pdu"
 )
 
 // Client is the object that will interact with the PACs
 type Client struct {
-	cfg  Config
-	pool *conn.Pool
+	cfg      Config
+	listener net.Listener
+	pool     chan int
 }
 
 // NewClient will create a new client for interacting with a PACs
 func NewClient(cfg Config) (*Client, error) {
-	return &Client{
-		cfg:  cfg,
-		pool: conn.NewPool(cfg.AETitle, cfg.Conn),
-	}, cfg.Validate()
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	l, err := net.Listen("tcp", fmt.Sprintf(":%v", cfg.Port))
+	if err != nil {
+		return nil, err
+	}
+	client := &Client{
+		cfg:      cfg,
+		pool:     make(chan int, cfg.Conn.MaxConnections),
+		listener: l,
+	}
+	for range cfg.Conn.MaxConnections {
+		client.pool <- 1
+	}
+	go client.listen()
+	return client, nil
 }
 
-func (c *Client) dispatch(ctx context.Context, entity conn.Entity, cmd *commands.Command, payload []byte) ([]dicom.Dataset, error) {
+func (c *Client) listen() {
+	for {
+		conn, err := c.listener.Accept()
+		if err != nil {
+			return
+		}
+		fmt.Println(pdu.NewReader(conn).Next())
+	}
+}
+
+func (c *Client) Close() error {
+	return c.listener.Close()
+}
+
+func (c *Client) aquireConn(ctx context.Context, entity Entity) (*Conn, error) {
+	<-c.pool
+	return Connect(ctx, c.cfg.AETitle, entity, &c.cfg.Conn)
+}
+
+func (c *Client) releaseConn(con *Conn) error {
+	c.pool <- 1
+	return con.Close()
+}
+
+func (c *Client) dispatch(ctx context.Context, entity Entity, cmd *commands.Command, ds *dicom.Dataset) ([]dicom.Dataset, error) {
 	// Check if already cancelled
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
-	if cmd.CommandDataSetType != commands.Null && len(payload) == 0 {
-		return nil, fmt.Errorf("empty payload provided to a command that requires a payload")
-	}
-	conn, err := c.pool.Aquire(ctx, entity)
+	conn, err := c.aquireConn(ctx, entity)
 	if err != nil {
 		return nil, err
 	}
-	defer c.pool.Release(conn)
+	defer c.releaseConn(conn)
 
 	// Check if cancelled
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
-	ctxMan, err := conn.Associate(cmd.AffectedSOPClassUID, nil)
-	if err != nil {
+	if err := conn.Associate(cmd.AffectedSOPClassUID, readTransferSyntax(ds)); err != nil {
 		return nil, err
 	}
 
 	// Check if cancelled
 	if err := ctx.Err(); err != nil {
+		conn.Abort()
 		return nil, err
 	}
 
-	respCmd, data, err := conn.Pdata(ctx, ctxMan, cmd, payload)
+	respCmd, data, err := conn.Pdata(cmd, ds)
 	if err != nil {
 		conn.Abort()
 		return nil, err
@@ -70,37 +107,71 @@ func (c *Client) dispatch(ctx context.Context, entity conn.Entity, cmd *commands
 
 // Echo will issue an echo command and will return an error if something went wrong.
 // No error will be returned if the error command returned successfully.
-func (c *Client) Echo(ctx context.Context, entity conn.Entity) error {
+func (c *Client) Echo(ctx context.Context, entity Entity) error {
 	_, err := c.dispatch(ctx, entity, &commands.Command{
 		CommandField:        commands.CECHORQ,
 		AffectedSOPClassUID: serviceobjectpair.VerificationClasses,
-		CommandDataSetType:  commands.Null,
 	}, nil)
 	return err
 }
 
-func (c *Client) Store(ctx context.Context, entity conn.Entity, ds dicom.Dataset) ([]dicom.Dataset, error) {
-	element, err := ds.FindElementByTag(tag.SOPClassUID)
+func (c *Client) Store(ctx context.Context, entity Entity, ds dicom.Dataset) error {
+	sopClassUIDs, err := getSOPUIDs(ds, tag.SOPClassUID)
 	if err != nil {
-		return nil, fmt.Errorf("could not find datasets sop class uid: %v", err)
-	}
-	val, ok := element.Value.GetValue().([]string)
-	if !ok {
-		return nil, fmt.Errorf("datasets sop class uid is an invalid value")
+		return err
 	}
 
+	sopInstanceUIDs, err := getSOPUIDs(ds, tag.SOPInstanceUID)
+	if err != nil {
+		return err
+	}
+
+	_, err = c.dispatch(ctx, entity, &commands.Command{
+		CommandField:           commands.CSTORERQ,
+		AffectedSOPClassUID:    append(sopClassUIDs, serviceobjectpair.StorageManagementClasses...),
+		AffectedSOPInstanceUID: sopInstanceUIDs,
+	}, &ds)
+	return err
+}
+
+func getSOPUIDs(ds dicom.Dataset, t tag.Tag) ([]serviceobjectpair.UID, error) {
+	val, err := readElementVal(ds, t)
+	if err != nil {
+		return nil, err
+	}
 	sopUIDs := make([]serviceobjectpair.UID, len(val))
 	for i, uid := range val {
 		sopUIDs[i] = serviceobjectpair.UID(uid)
 	}
+	return sopUIDs, nil
+}
 
-	buf := bytes.NewBuffer([]byte{})
-	if err := dicom.Write(buf, ds); err != nil {
+func readTransferSyntax(ds *dicom.Dataset) []transfersyntax.UID {
+	if ds == nil {
+		return transfersyntax.StandardSyntaxes
+	}
+
+	val, err := readElementVal(*ds, tag.TransferSyntaxUID)
+	if err != nil {
+		return transfersyntax.StandardSyntaxes
+	}
+	ts := make([]transfersyntax.UID, len(val))
+	for i, uid := range val {
+		ts[i] = transfersyntax.UID(uid)
+	}
+	return ts
+}
+
+func readElementVal(ds dicom.Dataset, t tag.Tag) ([]string, error) {
+	info, _ := tag.Find(t)
+
+	element, err := ds.FindElementByTag(t)
+	if err != nil {
 		return nil, err
 	}
-	return c.dispatch(ctx, entity, &commands.Command{
-		CommandField:        commands.CSTORERQ,
-		AffectedSOPClassUID: append(sopUIDs, serviceobjectpair.StorageManagementClasses...),
-		CommandDataSetType:  commands.NonNull,
-	}, buf.Bytes())
+	val, ok := element.Value.GetValue().([]string)
+	if !ok {
+		return nil, fmt.Errorf("%v is wrong format", info.Name)
+	}
+	return val, nil
 }
