@@ -225,7 +225,6 @@ func (c *Conn) sendCmd(ctxID uint8, cmd *commands.Command, ts transfersyntax.UID
 				return err
 			}
 		}
-
 		pdatas = append(pdatas, pdu.CreatePdata(ctxID, false, buf.Bytes())...)
 	}
 

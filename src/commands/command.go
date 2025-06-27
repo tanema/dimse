@@ -48,28 +48,28 @@ type (
 
 const (
 	CSTORERQ        Kind = 0x0001
-	CSTORERSP       Kind = 0x8001
 	CGETRQ          Kind = 0x0010
-	CGETRSP         Kind = 0x8010
 	CFINDRQ         Kind = 0x0020
-	CFINDRSP        Kind = 0x8020
 	CMOVERQ         Kind = 0x0021
-	CMOVERSP        Kind = 0x8021
 	CECHORQ         Kind = 0x0030
-	CECHORSP        Kind = 0x8030
 	NEVENTREPORTRQ  Kind = 0x0100
-	NEVENTREPORTRSP Kind = 0x8100
 	NGETRQ          Kind = 0x0110
-	NGETRSP         Kind = 0x8110
 	NSETRQ          Kind = 0x0120
-	NSETRSP         Kind = 0x8120
 	NACTIONRQ       Kind = 0x0130
-	NACTIONRSP      Kind = 0x8130
 	NCREATERQ       Kind = 0x0140
-	NCREATERSP      Kind = 0x8140
 	NDELETERQ       Kind = 0x0150
-	NDELETERSP      Kind = 0x8150
 	CCANCELRQ       Kind = 0x0FFF
+	CSTORERSP       Kind = 0x8001
+	CGETRSP         Kind = 0x8010
+	CFINDRSP        Kind = 0x8020
+	CMOVERSP        Kind = 0x8021
+	CECHORSP        Kind = 0x8030
+	NEVENTREPORTRSP Kind = 0x8100
+	NGETRSP         Kind = 0x8110
+	NSETRSP         Kind = 0x8120
+	NACTIONRSP      Kind = 0x8130
+	NCREATERSP      Kind = 0x8140
+	NDELETERSP      Kind = 0x8150
 
 	Null    DataSetType = 0x101
 	NonNull DataSetType = 1
@@ -122,10 +122,14 @@ func (c *Command) encode(w *dicom.Writer) error {
 		return err
 	} else if err := writeElement(w, tags.MessageID, []int{c.MessageID}); err != nil {
 		return err
-	} else if err := writeElement(w, tags.MessageIDBeingRespondedTo, []int{c.MessageIDBeingRespondedTo}); err != nil {
-		return err
 	} else if err := writeElement(w, tags.CommandDataSetType, []int{int(dst)}); err != nil {
 		return err
+	}
+
+	if c.MessageIDBeingRespondedTo != 0 {
+		if err := writeElement(w, tags.MessageIDBeingRespondedTo, []int{c.MessageIDBeingRespondedTo}); err != nil {
+			return err
+		}
 	}
 
 	if c.CommandField == CSTORERQ || c.CommandField == CMOVERQ || c.CommandField == CGETRQ || c.CommandField == CFINDRQ {

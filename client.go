@@ -116,19 +116,19 @@ func (c *Client) Echo(ctx context.Context, entity Entity) error {
 }
 
 func (c *Client) Store(ctx context.Context, entity Entity, ds dicom.Dataset) error {
-	sopClassUIDs, err := getSOPUIDs(ds, tag.SOPClassUID)
+	sopClassUIDs, err := getSOPUIDs(ds, tag.MediaStorageSOPClassUID)
 	if err != nil {
 		return err
 	}
 
-	sopInstanceUIDs, err := getSOPUIDs(ds, tag.SOPInstanceUID)
+	sopInstanceUIDs, err := getSOPUIDs(ds, tag.MediaStorageSOPInstanceUID)
 	if err != nil {
 		return err
 	}
 
 	_, err = c.dispatch(ctx, entity, &commands.Command{
 		CommandField:           commands.CSTORERQ,
-		AffectedSOPClassUID:    append(sopClassUIDs, serviceobjectpair.StorageManagementClasses...),
+		AffectedSOPClassUID:    sopClassUIDs,
 		AffectedSOPInstanceUID: sopInstanceUIDs,
 	}, &ds)
 	return err

@@ -1,4 +1,7 @@
 # PDU message descriptions
+PDU stands for protocol data unit, and this doc overall describes the underlying
+protocol that establishes an association with an AE, issues a command, and responds
+to any subsequent commands.
 
 ## PDU DIMSE Flow
 It seems like since you can only have 128(255/2) presentation contexts you should
@@ -18,6 +21,7 @@ full command process looks like:
 - -> Release Request
 - <- Release Response
 
+# PDU Definitions
 
 ## ASSOCIATE-RQ
 association request

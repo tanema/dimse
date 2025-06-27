@@ -33,7 +33,7 @@ func main() {
 	ctx := context.Background()
 	var wg sync.WaitGroup
 	//acts := []action{echo, find, get, move, store}
-	acts := []action{echo, find, get}
+	acts := []action{store}
 	for _, act := range acts {
 		wg.Add(1)
 		go act(ctx, &wg, client)
@@ -97,7 +97,7 @@ func move(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client) {
 
 func store(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client) {
 	defer wg.Done()
-	ds, err := dicom.ParseFile("./data/example.dcm", nil)
+	ds, err := dicom.ParseFile("./data/4.dcm", nil)
 	checkErr("parsing dicom", err)
 	checkErr("store", client.Store(ctx, TestAE, ds))
 }
