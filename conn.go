@@ -71,10 +71,9 @@ func (c *Conn) Associate(sopsClasses []serviceobjectpair.UID, ts []transfersynta
 	}
 	switch pt := evt.(type) {
 	case *pdu.AAssociate:
-		for _, item := range pt.Items {
-			if pcu, ok := item.(*pdu.PresentationContextItem); ok && pcu.Result == presentationctx.Accepted {
-				ts := pcu.Items[0].(*pdu.TransferSyntaxSubItem)
-				ctxManager.Accept(pcu.ContextID, transfersyntax.UID(ts.Name))
+		for _, pcu := range pt.PresentationItems {
+			if pcu.Result == presentationctx.Accepted {
+				ctxManager.Accept(pcu.ContextID, transfersyntax.UID(pcu.TransferSyntaxes[0]))
 			}
 		}
 		c.ctxManager = ctxManager
@@ -146,45 +145,43 @@ func (c *Conn) readPData(ts transfersyntax.UID, ctxID uint8, bo binary.ByteOrder
 		if err != nil {
 			return nil, nil, err
 		}
-		switch tevt := evt.(type) {
+		switch item := evt.(type) {
 		case *pdu.PDataTf:
-			for _, item := range tevt.Items {
-				if item.Command {
-					if cmd, err = commands.Decode(item.Value, ts); err != nil {
-						return nil, nil, err
-					} else if !cmd.HasData {
-						return cmd, sets, nil
-					}
-					continue
+			if item.Command {
+				if cmd, err = commands.Decode(item.Value, ts); err != nil {
+					return nil, nil, err
+				} else if !cmd.HasData {
+					return cmd, sets, nil
 				}
+				continue
+			}
 
-				switch cmd.CommandField {
-				case commands.CFINDRSP, commands.CGETRSP, commands.CMOVERSP:
-					payload, err := encoding.NewReader(bytes.NewBuffer(item.Value), bo, implicit).Decode()
+			switch cmd.CommandField {
+			case commands.CFINDRSP, commands.CGETRSP, commands.CMOVERSP:
+				payload, err := encoding.NewReader(bytes.NewBuffer(item.Value), bo, implicit).Decode()
+				if err != nil {
+					return nil, nil, err
+				}
+				sets = append(sets, payload)
+				if item.Last {
+					return cmd, sets, nil
+				}
+			case commands.CSTORERQ:
+				buffer = append(buffer, item.Value...)
+				if item.Last {
+					d, err := dicom.Parse(bytes.NewBuffer(buffer), int64(len(buffer)), nil)
 					if err != nil {
 						return nil, nil, err
+					} else if err := c.cstoreRsp(ctxID, cmd); err != nil {
+						return nil, nil, err
 					}
-					sets = append(sets, payload)
-					if item.Last {
-						return cmd, sets, nil
-					}
-				case commands.CSTORERQ:
-					buffer = append(buffer, item.Value...)
-					if item.Last {
-						d, err := dicom.Parse(bytes.NewBuffer(buffer), int64(len(buffer)), nil)
-						if err != nil {
-							return nil, nil, err
-						} else if err := c.cstoreRsp(ctxID, cmd); err != nil {
-							return nil, nil, err
-						}
-						sets = append(sets, d)
-					}
-				default:
-					return nil, nil, fmt.Errorf("unhandled message type %s", cmd.CommandField)
+					sets = append(sets, d)
 				}
+			default:
+				return nil, nil, fmt.Errorf("unhandled message type %s", cmd.CommandField)
 			}
 		case *pdu.AAbort:
-			return nil, nil, fmt.Errorf("aborted pdata. Reason: %s Source: %s", tevt.Reason, tevt.Source)
+			return nil, nil, fmt.Errorf("aborted pdata. Reason: %s Source: %s", item.Reason, item.Source)
 		default:
 			return nil, nil, fmt.Errorf("unexpected message %T after sending release", evt)
 		}

@@ -8,28 +8,22 @@ import (
 )
 
 func CreateAssoc(localTitle, remoteTitle string, chunkSize uint32, sopsClasses []serviceobjectpair.UID, transfersyntaxes []transfersyntax.UID) (*AAssociate, *ContextManager) {
-	assoc := &AAssociate{
-		Type:            TypeAAssociateRq,
-		ProtocolVersion: CurrentProtocolVersion,
-		CallingAETitle:  localTitle,
-		CalledAETitle:   remoteTitle,
-		Items:           []any{ApplicationContextItem{Name: DICOMApplicationContextItemName}},
-	}
-
 	cm := NewContextManager()
+	pci := []PresentationContextItem{}
 	for _, sop := range sopsClasses {
-		assoc.Items = append(assoc.Items, cm.Add(sop, transfersyntaxes).ToPCI())
+		pci = append(pci, cm.Add(sop, transfersyntaxes).ToPCI())
 	}
-
-	assoc.Items = append(assoc.Items,
-		UserInformationItem{
-			Items: []any{
-				UserInformationMaximumLengthItem{chunkSize},
-				ImplementationClassUIDSubItem{ImplementationClassUID},
-				ImplementationVersionNameSubItem{ImplementationName},
-			},
-		})
-	return assoc, cm
+	return &AAssociate{
+		Type:                      TypeAAssociateRq,
+		ProtocolVersion:           CurrentProtocolVersion,
+		CallingAETitle:            localTitle,
+		CalledAETitle:             remoteTitle,
+		ApplicationContext:        DICOMApplicationContextItemName,
+		PresentationItems:         pci,
+		MaximumLengthReceived:     chunkSize,
+		ImplementationClassUID:    ImplementationClassUID,
+		ImplementationVersionName: ImplementationName,
+	}, cm
 }
 
 func CreateRelease() *AReleaseRq {
@@ -56,14 +50,10 @@ func CreatePdata(ctxID uint8, cmd bool, data []byte) []*PDataTf {
 		data = data[chunkSize:]
 		lastChunk := len(data) == 0
 		pdus = append(pdus, &PDataTf{
-			Items: []PresentationDataValueItem{
-				{
-					ContextID: ctxID,
-					Command:   cmd,
-					Last:      lastChunk, // Set later.
-					Value:     chunk,
-				},
-			},
+			ContextID: ctxID,
+			Command:   cmd,
+			Last:      lastChunk,
+			Value:     chunk,
 		})
 	}
 	return pdus

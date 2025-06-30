@@ -17,34 +17,13 @@ func EncodePDU(pdu any) ([]byte, error) {
 	switch n := pdu.(type) {
 	case *AAssociate:
 		pduType = n.Type
-		if n.Type == 0 || n.CalledAETitle == "" || n.CallingAETitle == "" {
-			return nil, fmt.Errorf("Malformed associate")
-		}
-		if err := enc.Write(
-			n.ProtocolVersion,
-			encoding.Skip(2),
-			[]byte(padString(n.CalledAETitle, 16)),
-			[]byte(padString(n.CallingAETitle, 16)),
-			encoding.Skip(32),
-		); err != nil {
-			return nil, err
-		}
-
-		for _, item := range n.Items {
-			if err := writeSubItem(enc, item); err != nil {
-				return nil, err
-			}
-		}
+		err = encodeAssociate(enc, n)
 	case *AAssociateRj:
 		pduType = TypeAAssociateRj
-		err = enc.Write(encoding.Skip(1), &n.Result, &n.Source, &n.Reason)
+		err = enc.Write(encoding.Skip(1), n.Result, n.Source, n.Reason)
 	case *PDataTf:
 		pduType = TypePDataTf
-		for _, item := range n.Items {
-			if err := writeSubItem(enc, item); err != nil {
-				return nil, err
-			}
-		}
+		err = encodePData(enc, n)
 	case *AReleaseRq:
 		pduType = TypeAReleaseRq
 		err = enc.Write(encoding.Skip(4))
@@ -67,58 +46,61 @@ func EncodePDU(pdu any) ([]byte, error) {
 	return append(header[:], enc.Bytes()...), nil
 }
 
-func writeSubItem(w *encoding.Writer, i any) error {
-	switch val := i.(type) {
-	case UserInformationMaximumLengthItem:
-		return w.Write(item.UserInformationMaximumLength, encoding.Skip(1), uint16(4), val.MaximumLengthReceived)
-	case AsynchronousOperationsWindowSubItem:
-		return w.Write(item.AsynchronousOperationsWindow, encoding.Skip(1), uint16(4), val.MaxOpsPerformed, val.MaxOpsInvoked)
-	case RoleSelectionSubItem:
-		return w.Write(item.RoleSelection, encoding.Skip(1), uint16(2+len(val.SOPClassUID)+1*2), uint16(len(val.SOPClassUID)), val.SCURole, val.SCPRole)
-	case SubItemUnsupported:
-		return encSubItemWithName(w, item.Type(val.Type), string(val.Data))
-	case ImplementationClassUIDSubItem:
-		return encSubItemWithName(w, item.ImplementationClassUID, val.Name)
-	case ImplementationVersionNameSubItem:
-		return encSubItemWithName(w, item.ImplementationVersionName, val.Name)
-	case ApplicationContextItem:
-		return encSubItemWithName(w, item.ApplicationContext, val.Name)
-	case AbstractSyntaxSubItem:
-		return encSubItemWithName(w, item.AbstractSyntax, val.Name)
-	case TransferSyntaxSubItem:
-		return encSubItemWithName(w, item.TransferSyntax, val.Name)
-	case UserInformationItem:
-		enc := encoding.NewWriter(binary.BigEndian)
-		for _, s := range val.Items {
-			if err := writeSubItem(enc, s); err != nil {
-				return err
-			}
-		}
-		return w.Write(item.UserInformation, encoding.Skip(1), uint16(enc.Len()), enc.Bytes())
-	case PresentationContextItem:
-		enc := encoding.NewWriter(binary.BigEndian)
-		for _, s := range val.Items {
-			if err := writeSubItem(enc, s); err != nil {
-				return err
-			}
-		}
-		return w.Write(val.Type, encoding.Skip(1), uint16(4+enc.Len()), val.ContextID, encoding.Skip(3), enc.Bytes())
-	case PresentationDataValueItem:
-		var header byte
-		if val.Command {
-			header |= 0b01
-		}
-		if val.Last {
-			header |= 0b10
-		}
-		return w.Write(uint32(2+len(val.Value)), val.ContextID, header, val.Value)
-	default:
-		return fmt.Errorf("cannot write sub item type %T", i)
+func encodePData(w *encoding.Writer, n *PDataTf) error {
+	var header byte
+	if n.Command {
+		header |= 0b01
 	}
+	if n.Last {
+		header |= 0b10
+	}
+	return w.Write(uint32(2+len(n.Value)), n.ContextID, header, n.Value)
 }
 
-func encSubItemWithName(w *encoding.Writer, itemType item.Type, name string) error {
-	return w.Write(itemType, encoding.Skip(1), uint16(len(name)), []byte(name))
+func encodeAssociate(w *encoding.Writer, n *AAssociate) error {
+	if n.Type == 0 || n.CalledAETitle == "" || n.CallingAETitle == "" {
+		return fmt.Errorf("Malformed associate")
+	}
+	if err := w.Write(
+		n.ProtocolVersion,
+		encoding.Skip(2),
+		[]byte(padString(n.CalledAETitle, 16)),
+		[]byte(padString(n.CallingAETitle, 16)),
+		encoding.Skip(32),
+	); err != nil {
+		return err
+	}
+
+	if err := w.Write(item.ApplicationContext, encoding.Skip(1), uint16(len(n.ApplicationContext)), []byte(n.ApplicationContext)); err != nil {
+		return err
+	}
+
+	for _, pitem := range n.PresentationItems {
+		enc := encoding.NewWriter(binary.BigEndian)
+		if err := enc.Write(item.AbstractSyntax, encoding.Skip(1), uint16(len(pitem.AbstractSyntax)), []byte(pitem.AbstractSyntax)); err != nil {
+			return err
+		}
+		for _, s := range pitem.TransferSyntaxes {
+			if err := enc.Write(item.TransferSyntax, encoding.Skip(1), uint16(len(s)), []byte(s)); err != nil {
+				return err
+			}
+		}
+		if err := w.Write(item.PresentationContextRequest, encoding.Skip(1), uint16(4+enc.Len()), pitem.ContextID, encoding.Skip(3), enc.Bytes()); err != nil {
+			return err
+		}
+	}
+
+	enc := encoding.NewWriter(binary.BigEndian)
+	if err := enc.Write(item.UserInformationMaximumLength, encoding.Skip(1), uint16(4), n.MaximumLengthReceived); err != nil {
+		return err
+	} else if err := enc.Write(item.ImplementationClassUID, encoding.Skip(1), uint16(len(n.ImplementationClassUID)), []byte(n.ImplementationClassUID)); err != nil {
+		return err
+	} else if err := enc.Write(item.ImplementationVersionName, encoding.Skip(1), uint16(len(n.ImplementationVersionName)), []byte(n.ImplementationVersionName)); err != nil {
+		return err
+	} else if err := w.Write(item.UserInformation, encoding.Skip(1), uint16(enc.Len()), enc.Bytes()); err != nil {
+		return err
+	}
+	return nil
 }
 
 // padString pads the string with " " up to the given length.

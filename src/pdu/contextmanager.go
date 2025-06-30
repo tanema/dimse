@@ -3,7 +3,6 @@ package pdu
 import (
 	"fmt"
 
-	"github.com/tanema/dimse/src/defn/item"
 	"github.com/tanema/dimse/src/defn/serviceobjectpair"
 	"github.com/tanema/dimse/src/defn/transfersyntax"
 )
@@ -76,13 +75,9 @@ func (cm *ContextManager) GetWithSOP(sop serviceobjectpair.UID) (*PresentationCo
 }
 
 func (p *PresentationContext) ToPCI() PresentationContextItem {
-	syntaxItems := []any{AbstractSyntaxSubItem{Name: string(p.ServiceObjectPair)}}
-	for _, syntaxUID := range p.TransferSyntaxes {
-		syntaxItems = append(syntaxItems, TransferSyntaxSubItem{Name: string(syntaxUID)})
-	}
 	return PresentationContextItem{
-		Type:      item.PresentationContextRequest,
-		ContextID: p.ContextID,
-		Items:     syntaxItems,
+		ContextID:        p.ContextID,
+		AbstractSyntax:   p.ServiceObjectPair,
+		TransferSyntaxes: p.TransferSyntaxes,
 	}
 }

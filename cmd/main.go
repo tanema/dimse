@@ -14,7 +14,10 @@ import (
 
 type action func(context.Context, *sync.WaitGroup, *dimse.Client)
 
-const AETitle = "golang-dimse"
+const (
+	AETitle   = "golang-dimse"
+	PatientID = "PAT001"
+)
 
 var TestAE = dimse.Entity{Title: "test-serv", Host: "www.dicomserver.co.uk", Port: 104}
 
@@ -26,18 +29,42 @@ func checkErr(scope string, err error) {
 }
 
 func main() {
+	oneCmd()
+}
+
+func oneCmd() {
 	client, err := dimse.NewClient(dimse.Config{AETitle: AETitle})
 	checkErr("new client", err)
 	defer client.Close()
-
 	ctx := context.Background()
 	var wg sync.WaitGroup
-	//acts := []action{echo, find, get, move, store}
-	acts := []action{store}
-	for _, act := range acts {
-		wg.Add(1)
-		go act(ctx, &wg, client)
-	}
+	wg.Add(1)
+	echo(ctx, &wg, client)
+}
+
+func allCmds() {
+	client, err := dimse.NewClient(dimse.Config{AETitle: AETitle})
+	checkErr("new client", err)
+	defer client.Close()
+	ctx := context.Background()
+	query, err := client.Query(
+		TestAE,
+		query.Patient,
+		[]*dicom.Element{
+			newElem(tag.UID, []string{"*"}),
+			newElem(tag.StudyInstanceUID, []string{""}),
+			newElem(tag.SeriesInstanceUID, []string{""}),
+			newElem(tag.PatientID, []string{PatientID}),
+			newElem(tag.StudyDescription, []string{""}),
+		},
+	)
+	checkErr("query", err)
+
+	var wg sync.WaitGroup
+	wg.Add(3)
+	go echo(ctx, &wg, client)
+	go find(ctx, &wg, query)
+	go get(ctx, &wg, query)
 	wg.Wait()
 }
 
@@ -46,50 +73,22 @@ func echo(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client) {
 	checkErr("echo", client.Echo(ctx, TestAE))
 }
 
-func find(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client) {
+func find(ctx context.Context, wg *sync.WaitGroup, q *dimse.Query) {
 	defer wg.Done()
-	q, err := client.Query(
-		TestAE,
-		query.Study,
-		[]*dicom.Element{
-			newElem(tag.UID, []string{"*"}),
-			newElem(tag.StudyInstanceUID, []string{""}),
-			newElem(tag.SeriesInstanceUID, []string{""}),
-			newElem(tag.PatientID, []string{"N8V08W1E6N7C"}),
-			newElem(tag.StudyDescription, []string{""}),
-		},
-	)
-	checkErr("find query", err)
 	data, err := q.Find(ctx)
 	checkErr("find", err)
 	printResp("C-FIND", data)
 }
 
-func get(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client) {
+func get(ctx context.Context, wg *sync.WaitGroup, q *dimse.Query) {
 	defer wg.Done()
-	q, err := client.Query(
-		TestAE,
-		query.Patient,
-		[]*dicom.Element{
-			newElem(tag.PatientID, []string{"N8V08W1E6N7C"}),
-		},
-	)
-	checkErr("get query", err)
 	data, err := q.Get(ctx)
 	checkErr("get", err)
 	printResp("C-GET", data)
 }
 
-func move(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client) {
+func move(ctx context.Context, wg *sync.WaitGroup, q *dimse.Query) {
 	defer wg.Done()
-	q, err := client.Query(
-		TestAE,
-		query.Patient,
-		[]*dicom.Element{
-			newElem(tag.PatientID, []string{"N8V08W1E6N7C"}),
-		},
-	)
-	checkErr("move query", err)
 	data, err := q.Move(ctx, AETitle)
 	checkErr("move", err)
 	printResp("C-GET", data)
