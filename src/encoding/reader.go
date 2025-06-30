@@ -1,3 +1,5 @@
+// package encoding collects the shared behaviour for encoding and decoding protocol
+// data between application entities.
 package encoding
 
 import (

@@ -1,3 +1,5 @@
+// package pdu establishes the lower protocol level data structures for general
+// dimse communication.
 package pdu
 
 import (

@@ -1,3 +1,5 @@
+// package commands establishes actions to take on an application entity. These
+// commands are encoded into pdata bodies to be able to be interpreted by an AE.
 package commands
 
 import (
