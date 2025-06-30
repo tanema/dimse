@@ -11,8 +11,10 @@ import (
 	"github.com/suyashkumar/dicom"
 
 	"github.com/tanema/dimse/src/commands"
+	"github.com/tanema/dimse/src/defn/abort"
 	"github.com/tanema/dimse/src/defn/presentationctx"
 	"github.com/tanema/dimse/src/defn/serviceobjectpair"
+	"github.com/tanema/dimse/src/defn/source"
 	"github.com/tanema/dimse/src/defn/status"
 	"github.com/tanema/dimse/src/defn/transfersyntax"
 	"github.com/tanema/dimse/src/encoding"
@@ -88,7 +90,7 @@ func (c *Conn) Associate(sopsClasses []serviceobjectpair.UID, ts []transfersynta
 }
 
 func (c *Conn) Realease() error {
-	if err := c.Send(pdu.CreateRelease()); err != nil {
+	if err := c.Send(&pdu.AReleaseRq{}); err != nil {
 		return err
 	}
 	evt, err := c.Read()
@@ -103,7 +105,12 @@ func (c *Conn) Realease() error {
 	}
 }
 
-func (c *Conn) Abort() { c.Send(pdu.CreateAbort()) }
+func (c *Conn) Abort() {
+	c.Send(&pdu.AAbort{
+		Source: source.ServiceUser,
+		Reason: abort.NotSpecified,
+	})
+}
 
 func (c *Conn) Pdata(cmd *commands.Command, ds *dicom.Dataset) (*commands.Command, []dicom.Dataset, error) {
 	ctxID, ts, err := c.ctxManager.GetAccepted(cmd.AffectedSOPClassUID...)

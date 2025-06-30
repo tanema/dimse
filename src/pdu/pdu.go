@@ -40,8 +40,49 @@ type (
 	}
 	PDataTf struct {
 		ContextID uint8
-		Command   bool // Bit 7 (LSB): 1 means command 0 means data
-		Last      bool // Bit 6: 1 means last fragment. 0 means not last fragment.
+		Command   bool
+		Last      bool
 		Value     []byte
 	}
 )
+
+func CreateAssoc(localTitle, remoteTitle string, chunkSize uint32, sopsClasses []serviceobjectpair.UID, transfersyntaxes []transfersyntax.UID) (*AAssociate, *ContextManager) {
+	cm := NewContextManager()
+	pci := []PresentationContextItem{}
+	for _, sop := range sopsClasses {
+		pci = append(pci, cm.Add(sop, transfersyntaxes).ToPCI())
+	}
+	return &AAssociate{
+		Type:                      TypeAAssociateRq,
+		ProtocolVersion:           CurrentProtocolVersion,
+		CallingAETitle:            localTitle,
+		CalledAETitle:             remoteTitle,
+		ApplicationContext:        DICOMApplicationContextItemName,
+		PresentationItems:         pci,
+		MaximumLengthReceived:     chunkSize,
+		ImplementationClassUID:    ImplementationClassUID,
+		ImplementationVersionName: ImplementationName,
+	}, cm
+}
+
+func CreatePdata(ctxID uint8, cmd bool, data []byte) []*PDataTf {
+	var pdus []*PDataTf
+	// two byte header overhead.
+	maxChunkSize := int(DefaultMaxPDUSize - 8)
+	for len(data) > 0 {
+		chunkSize := len(data)
+		if chunkSize > maxChunkSize {
+			chunkSize = maxChunkSize
+		}
+		chunk := data[0:chunkSize]
+		data = data[chunkSize:]
+		lastChunk := len(data) == 0
+		pdus = append(pdus, &PDataTf{
+			ContextID: ctxID,
+			Command:   cmd,
+			Last:      lastChunk,
+			Value:     chunk,
+		})
+	}
+	return pdus
+}
