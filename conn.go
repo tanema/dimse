@@ -79,6 +79,7 @@ func (c *Conn) Associate(sopsClasses []serviceobjectpair.UID, ts []transfersynta
 				ctxManager.Accept(pcu.ContextID, transfersyntax.UID(pcu.TransferSyntaxes[0]))
 			}
 		}
+		c.cfg.ChunkSize = pt.MaximumLengthReceived
 		c.ctxManager = ctxManager
 		return nil
 	case *pdu.AAssociateRj:
@@ -135,11 +136,10 @@ func (c *Conn) Pdata(cmd *commands.Command, ds *dicom.Dataset) (*commands.Comman
 		case status.Successful:
 			return cmd, allDataSets, nil
 		default:
-			if status.StatusLevel(cmd.Status) == status.Warning {
-				return cmd, allDataSets, nil
-			} else if status.StatusLevel(cmd.Status) == status.Failure {
+			if status.StatusLevel(cmd.Status) == status.Failure {
 				return cmd, allDataSets, fmt.Errorf("received %s status %s from server: %s", cmd.CommandField, cmd.Status, cmd.ErrorComment)
 			}
+			return cmd, allDataSets, nil
 		}
 	}
 }
@@ -153,10 +153,11 @@ func (c *Conn) readPData(ts transfersyntax.UID, ctxID uint8, bo binary.ByteOrder
 		if err != nil {
 			return nil, nil, err
 		}
-		switch item := evt.(type) {
+		switch pd := evt.(type) {
 		case *pdu.PDataTf:
-			if item.Command {
-				if cmd, err = commands.Decode(item.Value, ts); err != nil {
+			if pd.Command {
+				cmd, err = commands.Decode(pd.Value, ts)
+				if err != nil {
 					return nil, nil, err
 				} else if !cmd.HasData {
 					return cmd, sets, nil
@@ -166,17 +167,17 @@ func (c *Conn) readPData(ts transfersyntax.UID, ctxID uint8, bo binary.ByteOrder
 
 			switch cmd.CommandField {
 			case commands.CFINDRSP, commands.CGETRSP, commands.CMOVERSP:
-				payload, err := encoding.NewReader(bytes.NewBuffer(item.Value), bo, implicit).Decode()
+				payload, err := encoding.NewReader(bytes.NewBuffer(pd.Value), bo, implicit).Decode()
 				if err != nil {
 					return nil, nil, err
 				}
 				sets = append(sets, payload)
-				if item.Last {
+				if pd.Last {
 					return cmd, sets, nil
 				}
 			case commands.CSTORERQ:
-				buffer = append(buffer, item.Value...)
-				if item.Last {
+				buffer = append(buffer, pd.Value...)
+				if pd.Last {
 					d, err := dicom.Parse(bytes.NewBuffer(buffer), int64(len(buffer)), nil)
 					if err != nil {
 						return nil, nil, err
@@ -189,7 +190,7 @@ func (c *Conn) readPData(ts transfersyntax.UID, ctxID uint8, bo binary.ByteOrder
 				return nil, nil, fmt.Errorf("unhandled message type %s", cmd.CommandField)
 			}
 		case *pdu.AAbort:
-			return nil, nil, fmt.Errorf("aborted pdata. Reason: %s Source: %s", item.Reason, item.Source)
+			return nil, nil, fmt.Errorf("aborted pdata. Reason: %s Source: %s", pd.Reason, pd.Source)
 		default:
 			return nil, nil, fmt.Errorf("unexpected message %T after sending release", evt)
 		}
@@ -216,7 +217,7 @@ func (c *Conn) sendCmd(ctxID uint8, cmd *commands.Command, ts transfersyntax.UID
 	}
 
 	// encode the command first and then send data along
-	pdatas := pdu.CreatePdata(ctxID, true, value)
+	pdatas := pdu.CreatePdata(ctxID, true, int(c.cfg.ChunkSize), value)
 	if ds != nil {
 		buf := bytes.NewBuffer([]byte{})
 		writer, err := dicom.NewWriter(buf)
@@ -234,7 +235,7 @@ func (c *Conn) sendCmd(ctxID uint8, cmd *commands.Command, ts transfersyntax.UID
 				return err
 			}
 		}
-		pdatas = append(pdatas, pdu.CreatePdata(ctxID, false, buf.Bytes())...)
+		pdatas = append(pdatas, pdu.CreatePdata(ctxID, false, int(c.cfg.ChunkSize), buf.Bytes())...)
 	}
 
 	for _, pd := range pdatas {

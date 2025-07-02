@@ -71,9 +71,9 @@ func CreateAssoc(localTitle, remoteTitle string, chunkSize uint32, sopsClasses [
 	}, cm
 }
 
-func CreatePdata(ctxID uint8, cmd bool, data []byte) []*PDataTf {
+func CreatePdata(ctxID uint8, cmd bool, maxChunkSize int, data []byte) []*PDataTf {
 	var pdus []*PDataTf
-	maxChunkSize := int(DefaultMaxPDUSize - 8)
+	maxChunkSize = maxChunkSize - 8
 	for len(data) > 0 {
 		chunkSize := min(maxChunkSize, len(data))
 		chunk := data[:chunkSize]

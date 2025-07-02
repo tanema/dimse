@@ -10,6 +10,7 @@ import (
 
 	"github.com/tanema/dimse/src/commands"
 	"github.com/tanema/dimse/src/defn/serviceobjectpair"
+	"github.com/tanema/dimse/src/defn/status"
 	"github.com/tanema/dimse/src/defn/transfersyntax"
 	"github.com/tanema/dimse/src/pdu"
 )
@@ -67,29 +68,13 @@ func (c *Client) releaseConn(con *Conn) error {
 }
 
 func (c *Client) dispatch(ctx context.Context, entity Entity, cmd *commands.Command, ds *dicom.Dataset) ([]dicom.Dataset, error) {
-	// Check if already cancelled
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-
 	conn, err := c.aquireConn(ctx, entity)
 	if err != nil {
 		return nil, err
 	}
 	defer c.releaseConn(conn)
 
-	// Check if cancelled
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-
 	if err := conn.Associate(cmd.AffectedSOPClassUID, readTransferSyntax(ds)); err != nil {
-		return nil, err
-	}
-
-	// Check if cancelled
-	if err := ctx.Err(); err != nil {
-		conn.Abort()
 		return nil, err
 	}
 
@@ -116,12 +101,12 @@ func (c *Client) Echo(ctx context.Context, entity Entity) error {
 }
 
 func (c *Client) Store(ctx context.Context, entity Entity, ds dicom.Dataset) error {
-	sopClassUIDs, err := getSOPUIDs(ds, tag.MediaStorageSOPClassUID)
+	sopClassUIDs, err := getSOPUIDs(ds, tag.SOPClassUID)
 	if err != nil {
 		return err
 	}
 
-	sopInstanceUIDs, err := getSOPUIDs(ds, tag.MediaStorageSOPInstanceUID)
+	sopInstanceUIDs, err := getSOPUIDs(ds, tag.SOPInstanceUID)
 	if err != nil {
 		return err
 	}
@@ -130,6 +115,7 @@ func (c *Client) Store(ctx context.Context, entity Entity, ds dicom.Dataset) err
 		CommandField:           commands.CSTORERQ,
 		AffectedSOPClassUID:    sopClassUIDs,
 		AffectedSOPInstanceUID: sopInstanceUIDs,
+		Status:                 status.Successful,
 	}, &ds)
 	return err
 }

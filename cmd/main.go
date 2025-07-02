@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 	"sync"
 
 	"github.com/suyashkumar/dicom"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/tanema/dimse"
 	"github.com/tanema/dimse/src/defn/query"
+	"github.com/tanema/dimse/src/defn/transfersyntax"
 )
 
 type action func(context.Context, *sync.WaitGroup, *dimse.Client)
@@ -29,7 +31,7 @@ func checkErr(scope string, err error) {
 }
 
 func main() {
-	allCmds()
+	oneCmd()
 }
 
 func oneCmd() {
@@ -85,6 +87,13 @@ func get(ctx context.Context, wg *sync.WaitGroup, q *dimse.Query) {
 	data, err := q.Get(ctx)
 	checkErr("get", err)
 	printResp("C-GET", data)
+	log.Println("saving get file")
+	for _, ds := range data {
+		f, err := os.Create("./tmp/file1.dcm")
+		checkErr("open file", err)
+		checkErr("file write", dicom.Write(f, ds, dicom.SkipVRVerification(), dicom.OverrideMissingTransferSyntax(string(transfersyntax.ImplicitVRLittleEndian))))
+		checkErr("file close", f.Close())
+	}
 }
 
 func move(ctx context.Context, wg *sync.WaitGroup, q *dimse.Query) {
@@ -96,7 +105,7 @@ func move(ctx context.Context, wg *sync.WaitGroup, q *dimse.Query) {
 
 func store(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client) {
 	defer wg.Done()
-	ds, err := dicom.ParseFile("./data/4.dcm", nil)
+	ds, err := dicom.ParseFile("./tmp/file1.dcm", nil)
 	checkErr("parsing dicom", err)
 	checkErr("store", client.Store(ctx, TestAE, ds))
 }
