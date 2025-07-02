@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 
 	"github.com/suyashkumar/dicom"
+	"github.com/suyashkumar/dicom/pkg/tag"
 
 	"github.com/tanema/dimse/src/commands"
 	"github.com/tanema/dimse/src/defn/abort"
@@ -49,8 +50,8 @@ func (c *Conn) Read() (any, error) {
 	return pdu.NewReader(c.conn).Next()
 }
 
-func (c *Conn) Send(msg any) error {
-	data, err := pdu.EncodePDU(msg)
+func (c *Conn) Send(msg any, bo binary.ByteOrder) error {
+	data, err := pdu.EncodePDU(msg, bo)
 	if err != nil {
 		return err
 	}
@@ -64,7 +65,7 @@ func (c *Conn) Close() error {
 
 func (c *Conn) Associate(sopsClasses []serviceobjectpair.UID, ts []transfersyntax.UID) error {
 	assocPDI, ctxManager := pdu.CreateAssoc(c.aeTitle, c.entity.Title, c.cfg.ChunkSize, sopsClasses, ts)
-	if err := c.Send(assocPDI); err != nil {
+	if err := c.Send(assocPDI, binary.BigEndian); err != nil {
 		return err
 	}
 	evt, err := c.Read()
@@ -90,7 +91,7 @@ func (c *Conn) Associate(sopsClasses []serviceobjectpair.UID, ts []transfersynta
 }
 
 func (c *Conn) Realease() error {
-	if err := c.Send(&pdu.AReleaseRq{}); err != nil {
+	if err := c.Send(&pdu.AReleaseRq{}, binary.BigEndian); err != nil {
 		return err
 	}
 	evt, err := c.Read()
@@ -109,7 +110,7 @@ func (c *Conn) Abort() {
 	c.Send(&pdu.AAbort{
 		Source: source.ServiceUser,
 		Reason: abort.NotSpecified,
-	})
+	}, binary.BigEndian)
 }
 
 func (c *Conn) Pdata(cmd *commands.Command, ds *dicom.Dataset) (*commands.Command, []dicom.Dataset, error) {
@@ -225,6 +226,10 @@ func (c *Conn) sendCmd(ctxID uint8, cmd *commands.Command, ts transfersyntax.UID
 		writer.SetTransferSyntax(transfersyntax.Info(ts))
 
 		for _, elem := range ds.Elements {
+			if elem.Tag.Group == tag.MetadataGroup {
+				continue
+			}
+
 			if err := writer.WriteElement(elem); err != nil {
 				return err
 			}
@@ -233,7 +238,7 @@ func (c *Conn) sendCmd(ctxID uint8, cmd *commands.Command, ts transfersyntax.UID
 	}
 
 	for _, pd := range pdatas {
-		if err := c.Send(pd); err != nil {
+		if err := c.Send(pd, binary.BigEndian); err != nil {
 			return err
 		}
 	}

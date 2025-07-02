@@ -73,11 +73,3 @@ func (cm *ContextManager) GetWithSOP(sop serviceobjectpair.UID) (*PresentationCo
 	}
 	return pc, nil
 }
-
-func (p *PresentationContext) ToPCI() PresentationContextItem {
-	return PresentationContextItem{
-		ContextID:        p.ContextID,
-		AbstractSyntax:   p.ServiceObjectPair,
-		TransferSyntaxes: p.TransferSyntaxes,
-	}
-}

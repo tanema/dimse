@@ -52,7 +52,11 @@ func CreateAssoc(localTitle, remoteTitle string, chunkSize uint32, sopsClasses [
 	cm := NewContextManager()
 	pci := []PresentationContextItem{}
 	for _, sop := range sopsClasses {
-		pci = append(pci, cm.Add(sop, transfersyntaxes).ToPCI())
+		pci = append(pci, PresentationContextItem{
+			ContextID:        cm.Add(sop, transfersyntaxes).ContextID,
+			AbstractSyntax:   sop,
+			TransferSyntaxes: transfersyntaxes,
+		})
 	}
 	return &AAssociate{
 		Type:                      TypeAAssociateRq,
@@ -69,14 +73,10 @@ func CreateAssoc(localTitle, remoteTitle string, chunkSize uint32, sopsClasses [
 
 func CreatePdata(ctxID uint8, cmd bool, data []byte) []*PDataTf {
 	var pdus []*PDataTf
-	// two byte header overhead.
 	maxChunkSize := int(DefaultMaxPDUSize - 8)
 	for len(data) > 0 {
-		chunkSize := len(data)
-		if chunkSize > maxChunkSize {
-			chunkSize = maxChunkSize
-		}
-		chunk := data[0:chunkSize]
+		chunkSize := min(maxChunkSize, len(data))
+		chunk := data[:chunkSize]
 		data = data[chunkSize:]
 		lastChunk := len(data) == 0
 		pdus = append(pdus, &PDataTf{

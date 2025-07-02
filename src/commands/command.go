@@ -116,15 +116,14 @@ func (c *Command) encode(w *dicom.Writer) error {
 		dst = NonNull
 	}
 
-	if err := writeElement(w, tags.CommandField, []int{int(c.CommandField)}); err != nil {
-		return err
-	} else if err := writeElement(w, tags.StatusTag, []int{int(c.Status)}); err != nil {
-		return err
-	} else if err := writeElement(w, tags.AffectedSOPClassUID, sops); err != nil {
-		return err
-	} else if err := writeElement(w, tags.MessageID, []int{c.MessageID}); err != nil {
-		return err
-	} else if err := writeElement(w, tags.CommandDataSetType, []int{int(dst)}); err != nil {
+	err := errors.Join(
+		writeElement(w, tags.CommandField, []int{int(c.CommandField)}),
+		writeElement(w, tags.StatusTag, []int{int(c.Status)}),
+		writeElement(w, tags.AffectedSOPClassUID, sops),
+		writeElement(w, tags.MessageID, []int{c.MessageID}),
+		writeElement(w, tags.CommandDataSetType, []int{int(dst)}),
+	)
+	if err != nil {
 		return err
 	}
 

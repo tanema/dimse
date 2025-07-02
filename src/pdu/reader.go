@@ -29,8 +29,6 @@ func (r *Reader) Next() (any, error) {
 	return r.pdu(pduType, int(length))
 }
 
-// EncodePDU reads a "pdu" from a stream. maxPDUSize defines the maximum
-// possible PDU size, in bytes, accepted by the caller.
 func (r *Reader) pdu(pduType Type, length int) (any, error) {
 	r.reader.PushLimit(int(length))
 	switch pduType {

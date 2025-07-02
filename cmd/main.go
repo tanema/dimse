@@ -29,7 +29,7 @@ func checkErr(scope string, err error) {
 }
 
 func main() {
-	oneCmd()
+	allCmds()
 }
 
 func oneCmd() {
@@ -39,7 +39,7 @@ func oneCmd() {
 	ctx := context.Background()
 	var wg sync.WaitGroup
 	wg.Add(1)
-	echo(ctx, &wg, client)
+	store(ctx, &wg, client)
 }
 
 func allCmds() {

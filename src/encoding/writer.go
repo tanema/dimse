@@ -24,7 +24,12 @@ func (w *Writer) Len() int {
 	return w.out.Len()
 }
 
-func (w *Writer) Write(parts ...any) error {
+func (w *Writer) Write(data []byte) (int, error) {
+	err := binary.Write(w.out, w.bo, data)
+	return len(data), err
+}
+
+func (w *Writer) WriteParts(parts ...any) error {
 	for _, data := range parts {
 		if skip, isSkip := data.(Skip); isSkip {
 			zeros := make([]byte, int(skip))
