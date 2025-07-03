@@ -74,10 +74,15 @@ func (c *Conn) Associate(sopsClasses []serviceobjectpair.UID, ts []transfersynta
 	}
 	switch pt := evt.(type) {
 	case *pdu.AAssociate:
+		acceptedCount := 0
 		for _, pcu := range pt.PresentationItems {
 			if pcu.Result == presentationctx.Accepted {
 				ctxManager.Accept(pcu.ContextID, transfersyntax.UID(pcu.TransferSyntaxes[0]))
+				acceptedCount++
 			}
+		}
+		if acceptedCount == 0 {
+			return fmt.Errorf("No transfer syntax accepted during association.")
 		}
 		c.cfg.ChunkSize = pt.MaximumLengthReceived
 		c.ctxManager = ctxManager
@@ -190,7 +195,7 @@ func (c *Conn) readPData(ts transfersyntax.UID, ctxID uint8, bo binary.ByteOrder
 				return nil, nil, fmt.Errorf("unhandled message type %s", cmd.CommandField)
 			}
 		case *pdu.AAbort:
-			return nil, nil, fmt.Errorf("aborted pdata. Reason: %s Source: %s", pd.Reason, pd.Source)
+			return nil, nil, fmt.Errorf("Received abort message while reading data. Reason: %s Source: %s", pd.Reason, pd.Source)
 		default:
 			return nil, nil, fmt.Errorf("unexpected message %T after sending release", evt)
 		}

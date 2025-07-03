@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
 	"os"
 	"sync"
@@ -16,12 +17,20 @@ import (
 
 type action func(context.Context, *sync.WaitGroup, *dimse.Client)
 
-const (
-	AETitle   = "golang-dimse"
-	PatientID = "PAT001"
+var (
+	AEHost    string
+	AEPort    int64
+	AETitle   string
+	PatientID string
+	TestAE    dimse.Entity
 )
 
-var TestAE = dimse.Entity{Title: "test-serv", Host: "www.dicomserver.co.uk", Port: 104}
+func init() {
+	flag.StringVar(&AEHost, "host", "www.dicomserver.co.uk", "the pacs host you are connecting to")
+	flag.Int64Var(&AEPort, "port", 104, "the pacs port you are connecting to")
+	flag.StringVar(&AETitle, "title", "golang-dimse", "the aetitle of your client")
+	flag.StringVar(&PatientID, "patient", "PAT001", "the patient query")
+}
 
 func checkErr(scope string, err error) {
 	if err != nil {
@@ -31,21 +40,10 @@ func checkErr(scope string, err error) {
 }
 
 func main() {
-	oneCmd()
-}
+	flag.Parse()
+	TestAE = dimse.Entity{Title: "test-serv", Host: AEHost, Port: int(AEPort)}
 
-func oneCmd() {
-	client, err := dimse.NewClient(dimse.Config{AETitle: AETitle})
-	checkErr("new client", err)
-	defer client.Close()
-	ctx := context.Background()
-	var wg sync.WaitGroup
-	wg.Add(1)
-	store(ctx, &wg, client)
-}
-
-func allCmds() {
-	client, err := dimse.NewClient(dimse.Config{AETitle: AETitle})
+	client, err := dimse.NewClient(dimse.Config{AETitle: AETitle, Port: 103})
 	checkErr("new client", err)
 	defer client.Close()
 	ctx := context.Background()
@@ -63,10 +61,11 @@ func allCmds() {
 	checkErr("query", err)
 
 	var wg sync.WaitGroup
-	wg.Add(3)
-	go echo(ctx, &wg, client)
+	wg.Add(1)
+	//go echo(ctx, &wg, client)
 	go find(ctx, &wg, query)
-	go get(ctx, &wg, query)
+	// go get(ctx, &wg, query)
+	// go store(ctx, &wg, client)
 	wg.Wait()
 }
 
@@ -87,7 +86,6 @@ func get(ctx context.Context, wg *sync.WaitGroup, q *dimse.Query) {
 	data, err := q.Get(ctx)
 	checkErr("get", err)
 	printResp("C-GET", data)
-	log.Println("saving get file")
 	for _, ds := range data {
 		f, err := os.Create("./tmp/file1.dcm")
 		checkErr("open file", err)
@@ -105,7 +103,7 @@ func move(ctx context.Context, wg *sync.WaitGroup, q *dimse.Query) {
 
 func store(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client) {
 	defer wg.Done()
-	ds, err := dicom.ParseFile("./tmp/file1.dcm", nil)
+	ds, err := dicom.ParseFile("./test/data/testfile.dcm", nil)
 	checkErr("parsing dicom", err)
 	checkErr("store", client.Store(ctx, TestAE, ds))
 }
