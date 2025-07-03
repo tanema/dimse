@@ -5,6 +5,7 @@ import (
 	"flag"
 	"log"
 	"os"
+	"slices"
 	"sync"
 
 	"github.com/suyashkumar/dicom"
@@ -18,11 +19,12 @@ import (
 type action func(context.Context, *sync.WaitGroup, *dimse.Client)
 
 var (
-	AEHost    string
-	AEPort    int64
-	AETitle   string
-	PatientID string
-	TestAE    dimse.Entity
+	AEHost     string
+	AEPort     int64
+	AETitle    string
+	PatientID  string
+	TestAE     dimse.Entity
+	builtQuery *dimse.Query
 )
 
 func init() {
@@ -47,6 +49,19 @@ func main() {
 	checkErr("new client", err)
 	defer client.Close()
 	ctx := context.Background()
+	var wg sync.WaitGroup
+	wg.Add(4)
+	go echo(ctx, &wg, client)
+	go find(ctx, &wg, client)
+	go get(ctx, &wg, client)
+	go store(ctx, &wg, client)
+	wg.Wait()
+}
+
+func getQuery(client *dimse.Client) *dimse.Query {
+	if builtQuery != nil {
+		return builtQuery
+	}
 	query, err := client.Query(
 		TestAE,
 		query.Patient,
@@ -59,14 +74,8 @@ func main() {
 		},
 	)
 	checkErr("query", err)
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	//go echo(ctx, &wg, client)
-	go find(ctx, &wg, query)
-	// go get(ctx, &wg, query)
-	// go store(ctx, &wg, client)
-	wg.Wait()
+	builtQuery = query
+	return query
 }
 
 func echo(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client) {
@@ -74,15 +83,17 @@ func echo(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client) {
 	checkErr("echo", client.Echo(ctx, TestAE))
 }
 
-func find(ctx context.Context, wg *sync.WaitGroup, q *dimse.Query) {
+func find(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client) {
 	defer wg.Done()
+	q := getQuery(client)
 	data, err := q.Find(ctx)
 	checkErr("find", err)
 	printResp("C-FIND", data)
 }
 
-func get(ctx context.Context, wg *sync.WaitGroup, q *dimse.Query) {
+func get(ctx context.Context, wg *sync.WaitGroup, client *dimse.Client) {
 	defer wg.Done()
+	q := getQuery(client)
 	data, err := q.Get(ctx)
 	checkErr("get", err)
 	printResp("C-GET", data)
@@ -117,7 +128,11 @@ func printResp(label string, d []dicom.Dataset) {
 		log.Printf("-> doc %v\n", i)
 		for _, e := range doc.Elements {
 			info, _ := tag.Find(e.Tag)
-			log.Printf("\t-> %v = %v\n", info.Name, e.Value)
+			if slices.Contains(info.VRs, "OB") {
+				log.Printf("\t-> %v = %T \n", info.Name, e.Value)
+			} else {
+				log.Printf("\t-> %v = %v\n", info.Name, e.Value)
+			}
 		}
 	}
 }
